@@ -194,7 +194,6 @@ describe("CompanyInvites", () => {
     expect(container.textContent).toContain("Latest invite link");
     expect(container.textContent).toContain("This URL includes the current Paperclip domain returned by the server.");
     expect(container.textContent).toContain("https://paperclip.local/invite/new-token");
-    expect(container.textContent).toContain("Copy link");
     expect(container.textContent).toContain("Open invite");
     expect(pushToastMock).toHaveBeenCalledWith({
       title: "Invite created",
@@ -202,16 +201,17 @@ describe("CompanyInvites", () => {
       tone: "success",
     });
 
-    const copyLinkButton = Array.from(container.querySelectorAll("button")).find(
-      (button) => button.textContent?.includes("Copy link"),
+    const inviteFieldButton = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent?.includes("https://paperclip.local/invite/new-token"),
     );
 
     await act(async () => {
-      copyLinkButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      inviteFieldButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     await flushReact();
 
     expect(clipboardWriteTextMock).toHaveBeenCalledTimes(2);
+    expect(container.textContent).toContain("Copied");
 
     await act(async () => {
       revokeButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));

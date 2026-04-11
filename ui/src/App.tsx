@@ -25,13 +25,17 @@ import { Costs } from "./pages/Costs";
 import { Activity } from "./pages/Activity";
 import { Inbox } from "./pages/Inbox";
 import { CompanySettings } from "./pages/CompanySettings";
+import { CompanyAccess } from "./pages/CompanyAccess";
+import { CompanyInvites } from "./pages/CompanyInvites";
 import { CompanySkills } from "./pages/CompanySkills";
 import { CompanyExport } from "./pages/CompanyExport";
 import { CompanyImport } from "./pages/CompanyImport";
 import { DesignGuide } from "./pages/DesignGuide";
 import { InstanceGeneralSettings } from "./pages/InstanceGeneralSettings";
+import { InstanceAccess } from "./pages/InstanceAccess";
 import { InstanceSettings } from "./pages/InstanceSettings";
 import { InstanceExperimentalSettings } from "./pages/InstanceExperimentalSettings";
+import { ProfileSettings } from "./pages/ProfileSettings";
 import { PluginManager } from "./pages/PluginManager";
 import { PluginSettings } from "./pages/PluginSettings";
 import { AdapterManager } from "./pages/AdapterManager";
@@ -44,6 +48,7 @@ import { AuthPage } from "./pages/Auth";
 import { BoardClaimPage } from "./pages/BoardClaim";
 import { CliAuthPage } from "./pages/CliAuth";
 import { InviteLandingPage } from "./pages/InviteLanding";
+import { JoinRequestQueue } from "./pages/JoinRequestQueue";
 import { NotFoundPage } from "./pages/NotFound";
 import { queryKeys } from "./lib/queryKeys";
 import { useCompany } from "./context/CompanyContext";
@@ -126,6 +131,8 @@ function boardRoutes() {
       <Route path="onboarding" element={<OnboardingRoutePage />} />
       <Route path="companies" element={<Companies />} />
       <Route path="company/settings" element={<CompanySettings />} />
+      <Route path="company/settings/access" element={<CompanyAccess />} />
+      <Route path="company/settings/invites" element={<CompanyInvites />} />
       <Route path="company/export/*" element={<CompanyExport />} />
       <Route path="company/import" element={<CompanyImport />} />
       <Route path="skills/*" element={<CompanySkills />} />
@@ -176,6 +183,7 @@ function boardRoutes() {
       <Route path="inbox/recent" element={<Inbox />} />
       <Route path="inbox/unread" element={<Inbox />} />
       <Route path="inbox/all" element={<Inbox />} />
+      <Route path="inbox/requests" element={<JoinRequestQueue />} />
       <Route path="inbox/new" element={<Navigate to="/inbox/mine" replace />} />
       <Route path="design-guide" element={<DesignGuide />} />
       <Route path="tests/ux/chat" element={<IssueChatUxLab />} />
@@ -322,7 +330,9 @@ export function App() {
           <Route path="instance" element={<Navigate to="/instance/settings/general" replace />} />
           <Route path="instance/settings" element={<Layout />}>
             <Route index element={<Navigate to="general" replace />} />
+            <Route path="profile" element={<ProfileSettings />} />
             <Route path="general" element={<InstanceGeneralSettings />} />
+            <Route path="access" element={<InstanceAccess />} />
             <Route path="heartbeats" element={<InstanceSettings />} />
             <Route path="experimental" element={<InstanceExperimentalSettings />} />
             <Route path="plugins" element={<PluginManager />} />

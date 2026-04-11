@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Copy, ExternalLink, MailPlus } from "lucide-react";
+import { Check, ExternalLink, MailPlus } from "lucide-react";
 import { accessApi } from "@/api/access";
 import { ApiError } from "@/api/client";
 import { Button } from "@/components/ui/button";
@@ -44,16 +44,20 @@ export function CompanyInvites() {
   const queryClient = useQueryClient();
   const [humanRole, setHumanRole] = useState<"owner" | "admin" | "operator" | "viewer">("operator");
   const [latestInviteUrl, setLatestInviteUrl] = useState<string | null>(null);
+  const [latestInviteCopied, setLatestInviteCopied] = useState(false);
+
+  useEffect(() => {
+    if (!latestInviteCopied) return;
+    const timeout = window.setTimeout(() => {
+      setLatestInviteCopied(false);
+    }, 1600);
+    return () => window.clearTimeout(timeout);
+  }, [latestInviteCopied]);
 
   async function copyInviteUrl(url: string) {
     try {
       if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
         await navigator.clipboard.writeText(url);
-        pushToast({
-          title: "Invite copied",
-          body: "Invite link copied to clipboard.",
-          tone: "success",
-        });
         return true;
       }
     } catch {
@@ -91,6 +95,7 @@ export function CompanyInvites() {
       }),
     onSuccess: async (invite) => {
       setLatestInviteUrl(invite.inviteUrl);
+      setLatestInviteCopied(false);
       const copied = await copyInviteUrl(invite.inviteUrl);
 
       await queryClient.invalidateQueries({ queryKey: queryKeys.access.invites(selectedCompanyId!, "all") });
@@ -212,19 +217,30 @@ export function CompanyInvites() {
         {latestInviteUrl ? (
           <div className="space-y-3 rounded-lg border border-border px-4 py-4">
             <div className="space-y-1">
-              <div className="text-sm font-medium">Latest invite link</div>
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-sm font-medium">Latest invite link</div>
+                {latestInviteCopied ? (
+                  <div className="inline-flex items-center gap-1 text-xs font-medium text-foreground">
+                    <Check className="h-3.5 w-3.5" />
+                    Copied
+                  </div>
+                ) : null}
+              </div>
               <div className="text-sm text-muted-foreground">
                 This URL includes the current Paperclip domain returned by the server.
               </div>
             </div>
-            <div className="rounded-md border border-border bg-background px-3 py-2 text-sm break-all">
+            <button
+              type="button"
+              onClick={async () => {
+                const copied = await copyInviteUrl(latestInviteUrl);
+                setLatestInviteCopied(copied);
+              }}
+              className="w-full rounded-md border border-border bg-muted/60 px-3 py-2 text-left text-sm break-all transition-colors hover:bg-background"
+            >
               {latestInviteUrl}
-            </div>
+            </button>
             <div className="flex flex-wrap gap-2">
-              <Button size="sm" variant="outline" onClick={() => void copyInviteUrl(latestInviteUrl)}>
-                <Copy className="h-4 w-4" />
-                Copy link
-              </Button>
               <Button size="sm" variant="outline" asChild>
                 <a href={latestInviteUrl} target="_blank" rel="noreferrer">
                   <ExternalLink className="h-4 w-4" />

@@ -88,8 +88,13 @@ export const queryKeys = {
     issues: (approvalId: string) => ["approvals", "issues", approvalId] as const,
   },
   access: {
+    invites: (companyId: string, state: string = "all") =>
+      ["access", "invites", companyId, state] as const,
     joinRequests: (companyId: string, status: string = "pending_approval") =>
       ["access", "join-requests", companyId, status] as const,
+    companyMembers: (companyId: string) => ["access", "company-members", companyId] as const,
+    adminUsers: (query: string) => ["access", "admin-users", query] as const,
+    userCompanyAccess: (userId: string) => ["access", "user-company-access", userId] as const,
     invite: (token: string) => ["access", "invite", token] as const,
   },
   auth: {

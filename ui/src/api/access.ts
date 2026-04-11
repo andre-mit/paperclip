@@ -1,4 +1,4 @@
-import type { AgentAdapterType, JoinRequest } from "@paperclipai/shared";
+import type { AgentAdapterType, JoinRequest, PermissionKey } from "@paperclipai/shared";
 import { api } from "./client";
 
 export type HumanCompanyRole = "owner" | "admin" | "operator" | "viewer";
@@ -7,6 +7,8 @@ type InviteSummary = {
   id: string;
   companyId: string | null;
   companyName?: string | null;
+  companyLogoUrl?: string | null;
+  companyBrandColor?: string | null;
   inviteType: "company_join" | "bootstrap_ceo";
   allowedJoinTypes: "human" | "agent" | "both";
   humanRole?: HumanCompanyRole | null;
@@ -98,16 +100,29 @@ type CompanyInviteCreated = {
   inviteMessage?: string | null;
 };
 
+export type CompanyMemberGrant = {
+  id: string;
+  companyId: string;
+  principalType: "user";
+  principalId: string;
+  permissionKey: PermissionKey;
+  scope: Record<string, unknown> | null;
+  grantedByUserId: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type CompanyMember = {
   id: string;
   companyId: string;
   principalType: "user";
   principalId: string;
   status: "pending" | "active" | "suspended";
-  membershipRole: HumanCompanyRole;
+  membershipRole: HumanCompanyRole | null;
   createdAt: string;
   updatedAt: string;
-  user: { id: string; email: string | null; name: string | null } | null;
+  user: { id: string; email: string | null; name: string | null; image: string | null } | null;
+  grants: CompanyMemberGrant[];
 };
 
 export type CompanyMembersResponse = {
@@ -116,7 +131,79 @@ export type CompanyMembersResponse = {
     currentUserRole: HumanCompanyRole | null;
     canManageMembers: boolean;
     canInviteUsers: boolean;
+    canApproveJoinRequests: boolean;
   };
+};
+
+export type CompanyInviteRecord = {
+  id: string;
+  companyId: string | null;
+  companyName: string | null;
+  inviteType: "company_join" | "bootstrap_ceo";
+  allowedJoinTypes: "human" | "agent" | "both";
+  humanRole: HumanCompanyRole | null;
+  defaultsPayload: Record<string, unknown> | null;
+  expiresAt: string;
+  invitedByUserId: string | null;
+  revokedAt: string | null;
+  acceptedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  inviteMessage: string | null;
+  state: "active" | "revoked" | "accepted" | "expired";
+  invitedByUser: { id: string; email: string | null; name: string | null; image: string | null } | null;
+  relatedJoinRequestId: string | null;
+};
+
+export type CompanyJoinRequest = JoinRequest & {
+  requesterUser: { id: string; email: string | null; name: string | null; image: string | null } | null;
+  approvedByUser: { id: string; email: string | null; name: string | null; image: string | null } | null;
+  rejectedByUser: { id: string; email: string | null; name: string | null; image: string | null } | null;
+  invite: {
+    id: string;
+    inviteType: "company_join" | "bootstrap_ceo";
+    allowedJoinTypes: "human" | "agent" | "both";
+    humanRole: HumanCompanyRole | null;
+    inviteMessage: string | null;
+    createdAt: string;
+    expiresAt: string;
+    revokedAt: string | null;
+    acceptedAt: string | null;
+    invitedByUser: { id: string; email: string | null; name: string | null; image: string | null } | null;
+  } | null;
+};
+
+export type AdminUserDirectoryEntry = {
+  id: string;
+  email: string | null;
+  name: string | null;
+  image: string | null;
+  isInstanceAdmin: boolean;
+  activeCompanyMembershipCount: number;
+};
+
+export type UserCompanyAccessEntry = {
+  id: string;
+  companyId: string;
+  principalType: "user";
+  principalId: string;
+  status: "pending" | "active" | "suspended";
+  membershipRole: HumanCompanyRole | "member" | null;
+  createdAt: string;
+  updatedAt: string;
+  companyName: string | null;
+  companyStatus: "active" | "paused" | "archived" | null;
+};
+
+export type UserCompanyAccessResponse = {
+  user: {
+    id: string;
+    email: string | null;
+    name: string | null;
+    image: string | null;
+    isInstanceAdmin: boolean;
+  } | null;
+  companyAccess: UserCompanyAccessEntry[];
 };
 
 export const accessApi = {
@@ -152,8 +239,24 @@ export const accessApi = {
       input,
     ),
 
-  listJoinRequests: (companyId: string, status: "pending_approval" | "approved" | "rejected" = "pending_approval") =>
-    api.get<JoinRequest[]>(`/companies/${companyId}/join-requests?status=${status}`),
+  listInvites: (
+    companyId: string,
+    state?: "active" | "revoked" | "accepted" | "expired",
+  ) =>
+    api.get<CompanyInviteRecord[]>(
+      `/companies/${companyId}/invites${state ? `?state=${state}` : ""}`,
+    ),
+
+  revokeInvite: (inviteId: string) => api.post(`/invites/${inviteId}/revoke`, {}),
+
+  listJoinRequests: (
+    companyId: string,
+    status: "pending_approval" | "approved" | "rejected" = "pending_approval",
+    requestType?: "human" | "agent",
+  ) =>
+    api.get<CompanyJoinRequest[]>(
+      `/companies/${companyId}/join-requests?status=${status}${requestType ? `&requestType=${requestType}` : ""}`,
+    ),
 
   listMembers: (companyId: string) =>
     api.get<CompanyMembersResponse>(`/companies/${companyId}/members`),
@@ -166,6 +269,17 @@ export const accessApi = {
       status?: "pending" | "active" | "suspended";
     },
   ) => api.patch<CompanyMember>(`/companies/${companyId}/members/${memberId}`, input),
+
+  updateMemberPermissions: (
+    companyId: string,
+    memberId: string,
+    input: {
+      grants: Array<{
+        permissionKey: PermissionKey;
+        scope?: Record<string, unknown> | null;
+      }>;
+    },
+  ) => api.patch<CompanyMember>(`/companies/${companyId}/members/${memberId}/permissions`, input),
 
   approveJoinRequest: (companyId: string, requestId: string) =>
     api.post<JoinRequest>(`/companies/${companyId}/join-requests/${requestId}/approve`, {}),
@@ -196,4 +310,19 @@ export const accessApi = {
 
   cancelCliAuthChallenge: (id: string, token: string) =>
     api.post<{ cancelled: boolean; status: string }>(`/cli-auth/challenges/${id}/cancel`, { token }),
+
+  searchAdminUsers: (query: string) =>
+    api.get<AdminUserDirectoryEntry[]>(`/admin/users?query=${encodeURIComponent(query)}`),
+
+  promoteInstanceAdmin: (userId: string) =>
+    api.post(`/admin/users/${userId}/promote-instance-admin`, {}),
+
+  demoteInstanceAdmin: (userId: string) =>
+    api.post(`/admin/users/${userId}/demote-instance-admin`, {}),
+
+  getUserCompanyAccess: (userId: string) =>
+    api.get<UserCompanyAccessResponse>(`/admin/users/${userId}/company-access`),
+
+  setUserCompanyAccess: (userId: string, companyIds: string[]) =>
+    api.put<UserCompanyAccessResponse>(`/admin/users/${userId}/company-access`, { companyIds }),
 };
