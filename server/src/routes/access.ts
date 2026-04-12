@@ -60,6 +60,10 @@ import {
   normalizeHumanRole,
   resolveHumanInviteRole,
 } from "../services/company-member-roles.js";
+import {
+  collapseDuplicatePendingHumanJoinRequests,
+  findReusableHumanJoinRequest,
+} from "../lib/join-request-dedupe.js";
 import { assertCompanyAccess } from "./authz.js";
 import {
   claimBoardOwnership,
@@ -1060,11 +1064,13 @@ async function loadCompanyInviteRecords(db: Db, companyId: string) {
 }
 
 async function loadJoinRequestRecords(db: Db, companyId: string) {
-  const rows = await db
-    .select()
-    .from(joinRequests)
-    .where(eq(joinRequests.companyId, companyId))
-    .orderBy(desc(joinRequests.createdAt));
+  const rows = collapseDuplicatePendingHumanJoinRequests(
+    await db
+      .select()
+      .from(joinRequests)
+      .where(eq(joinRequests.companyId, companyId))
+      .orderBy(desc(joinRequests.createdAt))
+  );
   const inviteIds = [...new Set(rows.map((row) => row.inviteId))];
   const inviteRows = inviteIds.length
     ? await db
@@ -2783,48 +2789,82 @@ export function accessRoutes(
 
       const actorEmail =
         requestType === "human" ? await resolveActorEmail(db, req) : null;
-      const created = !inviteAlreadyAccepted
-        ? await db.transaction(async (tx) => {
-            await tx
-              .update(invites)
-              .set({ acceptedAt: new Date(), updatedAt: new Date() })
-              .where(
-                and(
-                  eq(invites.id, invite.id),
-                  isNull(invites.acceptedAt),
-                  isNull(invites.revokedAt)
+      const existingHumanJoinRequest =
+        requestType === "human"
+          ? findReusableHumanJoinRequest(
+              await db
+                .select()
+                .from(joinRequests)
+                .where(
+                  and(
+                    eq(joinRequests.companyId, companyId),
+                    eq(joinRequests.requestType, "human")
+                  )
                 )
-              );
+                .orderBy(desc(joinRequests.createdAt)),
+              {
+                requestingUserId: req.actor.userId ?? "local-board",
+                requestEmailSnapshot: actorEmail
+              }
+            )
+          : null;
+      const created = !inviteAlreadyAccepted
+        ? existingHumanJoinRequest
+          ? await db.transaction(async (tx) => {
+              await tx
+                .update(invites)
+                .set({ acceptedAt: new Date(), updatedAt: new Date() })
+                .where(
+                  and(
+                    eq(invites.id, invite.id),
+                    isNull(invites.acceptedAt),
+                    isNull(invites.revokedAt)
+                  )
+                );
+              return existingHumanJoinRequest;
+            })
+          : await db.transaction(async (tx) => {
+              await tx
+                .update(invites)
+                .set({ acceptedAt: new Date(), updatedAt: new Date() })
+                .where(
+                  and(
+                    eq(invites.id, invite.id),
+                    isNull(invites.acceptedAt),
+                    isNull(invites.revokedAt)
+                  )
+                );
 
-            const row = await tx
-              .insert(joinRequests)
-              .values({
-                inviteId: invite.id,
-                companyId,
-                requestType,
-                status: "pending_approval",
-                requestIp: requestIp(req),
-                requestingUserId:
-                  requestType === "human"
-                    ? req.actor.userId ?? "local-board"
-                    : null,
-                requestEmailSnapshot:
-                  requestType === "human" ? actorEmail : null,
-                agentName: requestType === "agent" ? req.body.agentName : null,
-                adapterType: requestType === "agent" ? adapterType : null,
-                capabilities:
-                  requestType === "agent"
-                    ? req.body.capabilities ?? null
-                    : null,
-                agentDefaultsPayload:
-                  requestType === "agent" ? joinDefaults.normalized : null,
-                claimSecretHash,
-                claimSecretExpiresAt
-              })
-              .returning()
-              .then((rows) => rows[0]);
-            return row;
-          })
+              const row = await tx
+                .insert(joinRequests)
+                .values({
+                  inviteId: invite.id,
+                  companyId,
+                  requestType,
+                  status: "pending_approval",
+                  requestIp: requestIp(req),
+                  requestingUserId:
+                    requestType === "human"
+                      ? req.actor.userId ?? "local-board"
+                      : null,
+                  requestEmailSnapshot:
+                    requestType === "human" ? actorEmail : null,
+                  agentName:
+                    requestType === "agent" ? req.body.agentName : null,
+                  adapterType: requestType === "agent" ? adapterType : null,
+                  capabilities:
+                    requestType === "agent"
+                      ? req.body.capabilities ?? null
+                      : null,
+                  agentDefaultsPayload:
+                    requestType === "agent" ? joinDefaults.normalized : null,
+                  claimSecretHash,
+                  claimSecretExpiresAt
+                })
+                .returning()
+                .then((rows) => rows[0]);
+              return row;
+            })
         : await db
             .update(joinRequests)
             .set({
@@ -2970,8 +3010,10 @@ export function accessRoutes(
         entityId: created.id,
         details: {
           requestType,
-          requestIp: created.requestIp,
-          inviteReplay: inviteAlreadyAccepted
+          requestIp: requestIp(req),
+          inviteReplay: inviteAlreadyAccepted,
+          reusedExistingJoinRequest:
+            Boolean(existingHumanJoinRequest) && !inviteAlreadyAccepted
         }
       });
 
