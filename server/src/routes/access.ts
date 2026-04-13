@@ -918,6 +918,18 @@ function toInviteSummaryResponse(
   };
 }
 
+function actorHasActiveUserMembership(req: Request, companyId: string) {
+  return (
+    req.actor.type === "board" &&
+    typeof req.actor.userId === "string" &&
+    Array.isArray(req.actor.memberships) &&
+    req.actor.memberships.some(
+      (membership) =>
+        membership.companyId === companyId && membership.status === "active",
+    )
+  );
+}
+
 async function loadUsersById(db: Db, userIds: string[]) {
   if (userIds.length === 0) return new Map<string, ReturnType<typeof toUserProfile>>();
   const rows = await db
@@ -2696,6 +2708,12 @@ export function accessRoutes(
         !isLocalImplicit(req)
       ) {
         throw unauthorized("Authenticated user is required");
+      }
+      if (
+        requestType === "human" &&
+        actorHasActiveUserMembership(req, companyId)
+      ) {
+        throw conflict("You already belong to this company");
       }
       if (requestType === "agent" && !req.body.agentName) {
         if (

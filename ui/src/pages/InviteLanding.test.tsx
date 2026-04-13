@@ -13,6 +13,7 @@ const getSessionMock = vi.hoisted(() => vi.fn());
 const signInEmailMock = vi.hoisted(() => vi.fn());
 const signUpEmailMock = vi.hoisted(() => vi.fn());
 const healthGetMock = vi.hoisted(() => vi.fn());
+const listCompaniesMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../api/access", () => ({
   accessApi: {
@@ -32,6 +33,12 @@ vi.mock("../api/auth", () => ({
 vi.mock("../api/health", () => ({
   healthApi: {
     get: () => healthGetMock(),
+  },
+}));
+
+vi.mock("../api/companies", () => ({
+  companiesApi: {
+    list: () => listCompaniesMock(),
   },
 }));
 
@@ -98,6 +105,7 @@ describe("InviteLandingPage", () => {
       status: "ok",
       deploymentMode: "authenticated",
     });
+    listCompaniesMock.mockResolvedValue([]);
     getSessionMock.mockResolvedValue(null);
     signInEmailMock.mockResolvedValue(undefined);
     signUpEmailMock.mockResolvedValue(undefined);
@@ -220,6 +228,59 @@ describe("InviteLandingPage", () => {
 
     expect(container.querySelector('img[alt="Acme Robotics logo"]')).toBeNull();
     expect(container.querySelector('img[aria-hidden="true"]')).not.toBeNull();
+
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
+  it("waits for the membership check before showing invite acceptance to signed-in users", async () => {
+    let resolveCompanies: ((value: Array<{ id: string; name: string }>) => void) | null = null;
+    listCompaniesMock.mockImplementation(
+      () =>
+        new Promise<Array<{ id: string; name: string }>>((resolve) => {
+          resolveCompanies = resolve;
+        }),
+    );
+    getSessionMock.mockResolvedValue({
+      session: { id: "session-1", userId: "user-1" },
+      user: {
+        id: "user-1",
+        name: "Jane Example",
+        email: "jane@example.com",
+        image: null,
+      },
+    });
+
+    const root = createRoot(container);
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+
+    await act(async () => {
+      root.render(
+        <MemoryRouter initialEntries={["/invite/pcp_invite_test"]}>
+          <QueryClientProvider client={queryClient}>
+            <Routes>
+              <Route path="/invite/:token" element={<InviteLandingPage />} />
+            </Routes>
+          </QueryClientProvider>
+        </MemoryRouter>,
+      );
+    });
+    await flushReact();
+
+    expect(container.textContent).toContain("Checking your access...");
+    expect(container.textContent).not.toContain("Join company");
+    expect(acceptInviteMock).not.toHaveBeenCalled();
+
+    await act(async () => {
+      resolveCompanies?.([{ id: "company-1", name: "Acme Robotics" }]);
+    });
+    await flushReact();
+    await flushReact();
+
+    expect(acceptInviteMock).not.toHaveBeenCalled();
 
     await act(async () => {
       root.unmount();

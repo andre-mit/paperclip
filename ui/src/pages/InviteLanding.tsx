@@ -93,6 +93,15 @@ export function InviteLandingPage() {
   }, [companiesQuery.data, inviteQuery.data, token, navigate]);
 
   const invite = inviteQuery.data;
+  const isCheckingExistingMembership =
+    Boolean(sessionQuery.data) &&
+    Boolean(invite?.companyId) &&
+    companiesQuery.isLoading;
+  const isCurrentMember =
+    Boolean(invite?.companyId) &&
+    Boolean(
+      companiesQuery.data?.some((company) => company.id === invite?.companyId),
+    );
   const companyName = invite?.companyName?.trim() || null;
   const companyDisplayName = companyName || "this Paperclip company";
   const companyLogoUrl = invite?.companyLogoUrl?.trim() || null;
@@ -116,6 +125,12 @@ export function InviteLandingPage() {
   const acceptMutation = useMutation({
     mutationFn: async () => {
       if (!invite) throw new Error("Invite not found");
+      if (isCheckingExistingMembership) {
+        throw new Error("Checking your company access. Try again in a moment.");
+      }
+      if (isCurrentMember) {
+        throw new Error("This account already belongs to the company.");
+      }
       if (invite.inviteType === "bootstrap_ceo" || invite.allowedJoinTypes !== "agent") {
         return accessApi.acceptInvite(token, { requestType: "human" });
       }
@@ -176,6 +191,10 @@ export function InviteLandingPage() {
 
   if (inviteQuery.isLoading || healthQuery.isLoading || sessionQuery.isLoading) {
     return <div className="mx-auto max-w-xl py-10 text-sm text-muted-foreground">Loading invite...</div>;
+  }
+
+  if (isCheckingExistingMembership) {
+    return <div className="mx-auto max-w-xl py-10 text-sm text-muted-foreground">Checking your access...</div>;
   }
 
   if (inviteQuery.error || !invite) {
