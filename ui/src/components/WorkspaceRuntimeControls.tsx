@@ -151,7 +151,9 @@ export function buildWorkspaceRuntimeControlSections(input: {
   }
 
   const otherServices = runtimeServices
-    .filter((runtimeService) => !matchedRuntimeServiceIds.has(runtimeService.id))
+    .filter((runtimeService) =>
+      !matchedRuntimeServiceIds.has(runtimeService.id)
+      && (runtimeService.status === "starting" || runtimeService.status === "running"))
     .map((runtimeService) => ({
       key: `runtime:${runtimeService.id}`,
       title: runtimeService.serviceName,
@@ -379,7 +381,7 @@ export function WorkspaceRuntimeControls({
     otherServices: [],
   };
   const resolvedServiceEmptyMessage = emptyMessage ?? serviceEmptyMessage;
-  const runningCount = resolvedSections.services.filter(
+  const runningCount = [...resolvedSections.services, ...resolvedSections.otherServices].filter(
     (item) => item.statusLabel === "running" || item.statusLabel === "starting",
   ).length;
   const visibleDisabledHint = runningCount > 0 || disabledHint === null ? null : disabledHint;
