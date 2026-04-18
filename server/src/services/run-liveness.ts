@@ -143,7 +143,6 @@ export function hasConcreteActionEvidence(evidence: Partial<RunLivenessEvidenceI
     normalized.issueCommentsCreated +
       normalized.documentRevisionsCreated +
       normalized.workProductsCreated +
-      normalized.workspaceOperationsCreated +
       normalized.activityEventsCreated +
       normalized.toolOrActionEventsCreated >
     0

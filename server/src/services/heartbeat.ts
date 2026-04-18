@@ -4532,6 +4532,7 @@ export function heartbeatService(db: Db) {
         }
         await finalizeIssueCommentPolicy(livenessRun, agent);
         await releaseIssueExecutionAndPromote(livenessRun);
+        await handleRunLivenessContinuation(livenessRun);
       }
 
       if (finalizedRun) {
