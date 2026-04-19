@@ -10,7 +10,7 @@ description: >
 
 # Paperclip Dev
 
-This skill covers the day-to-day workflows for developing and operating a local Paperclip instance. It assumes the repo lives at `~/workspace/paperclip` (or the current checkout) with `origin` pointing to `git@github.com:paperclipai/paperclip.git`.
+This skill covers the day-to-day workflows for developing and operating a local Paperclip instance. It assumes you are working inside the Paperclip repo checkout with `origin` pointing to `git@github.com:paperclipai/paperclip.git`.
 
 > **MANDATORY:** Before running any CLI command, building, testing, or managing worktrees, you MUST read `doc/DEVELOPING.md` in the Paperclip repo. It is the canonical reference for all `paperclipai` CLI commands, their options, build/test workflows, database operations, worktree management, and diagnostics. Do NOT guess at flags or options — read the doc first.
 
@@ -76,8 +76,8 @@ The CLI has two tiers (see `doc/DEVELOPING.md` for full option tables):
 # 1. Create a worktree for a feature
 npx paperclipai worktree:make my-feature --start-point origin/main
 
-# 2. Move into it and source the environment
-cd ~/paperclip-my-feature
+# 2. Move into the worktree (path printed by worktree:make) and source the environment
+cd <worktree-path>
 eval "$(npx paperclipai worktree env)"
 
 # 3. Start the isolated Paperclip server
