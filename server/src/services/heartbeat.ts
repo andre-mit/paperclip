@@ -99,6 +99,7 @@ const MAX_INLINE_WAKE_COMMENT_BODY_TOTAL_CHARS = 12_000;
 const execFile = promisify(execFileCallback);
 const ACTIVE_HEARTBEAT_RUN_STATUSES = ["queued", "running"] as const;
 const UNSUCCESSFUL_HEARTBEAT_RUN_TERMINAL_STATUSES = ["failed", "cancelled", "timed_out"] as const;
+const RUNNING_ISSUE_WAKE_REASONS_REQUIRING_FOLLOWUP = new Set(["approval_approved"]);
 const SESSIONED_LOCAL_ADAPTERS = new Set([
   "claude_local",
   "codex_local",
@@ -1153,6 +1154,15 @@ function shouldAutoCheckoutIssueForWake(input: {
   if (wakeReason.startsWith("execution_")) return false;
 
   return true;
+}
+
+function shouldQueueFollowupForRunningIssueWake(input: {
+  contextSnapshot: Record<string, unknown> | null | undefined;
+  wakeCommentId: string | null;
+}) {
+  if (input.wakeCommentId) return true;
+  const wakeReason = readNonEmptyString(input.contextSnapshot?.wakeReason);
+  return Boolean(wakeReason && RUNNING_ISSUE_WAKE_REASONS_REQUIRING_FOLLOWUP.has(wakeReason));
 }
 
 function isCheckoutConflictError(error: unknown): boolean {
@@ -4741,12 +4751,12 @@ export function heartbeatService(db: Db) {
             normalizeAgentNameKey(executionAgent?.name);
           const isSameExecutionAgent =
             Boolean(executionAgentNameKey) && executionAgentNameKey === agentNameKey;
-          const shouldQueueFollowupForCommentWake =
-            Boolean(wakeCommentId) &&
+          const shouldQueueFollowupForRunningWake =
+            shouldQueueFollowupForRunningIssueWake({ contextSnapshot: enrichedContextSnapshot, wakeCommentId }) &&
             activeExecutionRun.status === "running" &&
             isSameExecutionAgent;
 
-          if (isSameExecutionAgent && !shouldQueueFollowupForCommentWake) {
+          if (isSameExecutionAgent && !shouldQueueFollowupForRunningWake) {
             const mergedContextSnapshot = mergeCoalescedContextSnapshot(
               activeExecutionRun.contextSnapshot,
               enrichedContextSnapshot,
@@ -4922,12 +4932,14 @@ export function heartbeatService(db: Db) {
     const sameScopeRunningRun = activeRuns.find(
       (candidate) => candidate.status === "running" && isSameTaskScope(runTaskKey(candidate), taskKey),
     );
-    const shouldQueueFollowupForCommentWake =
-      Boolean(wakeCommentId) && Boolean(sameScopeRunningRun) && !sameScopeQueuedRun;
+    const shouldQueueFollowupForRunningWake =
+      Boolean(sameScopeRunningRun) &&
+      !sameScopeQueuedRun &&
+      shouldQueueFollowupForRunningIssueWake({ contextSnapshot: enrichedContextSnapshot, wakeCommentId });
 
     const coalescedTargetRun =
       sameScopeQueuedRun ??
-      (shouldQueueFollowupForCommentWake ? null : sameScopeRunningRun ?? null);
+      (shouldQueueFollowupForRunningWake ? null : sameScopeRunningRun ?? null);
 
     if (coalescedTargetRun) {
       const mergedContextSnapshot = mergeCoalescedContextSnapshot(
