@@ -1,16 +1,52 @@
-import type { Issue, PluginApiRequestInput, PluginContext } from "@paperclipai/plugin-sdk";
-import { definePlugin, runWorker } from "@paperclipai/plugin-sdk";
+import { definePlugin, runWorker, type PluginApiRequestInput } from "@paperclipai/plugin-sdk";
+import { decomposeMission, type MissionDecompositionResult } from "./decompose.js";
+import { initializeMission, type MissionInitializationResult } from "./mission-initialization.js";
+import {
+  advanceMission,
+  buildMissionSummary,
+  waiveMissionFinding,
+  type MissionAdvanceResult,
+  type MissionSummary,
+  type MissionWaiveFindingResult,
+} from "./mission-runtime.js";
 import manifest, { MISSIONS_API_ROUTE_KEYS, MISSIONS_UI_SLOT_IDS } from "./manifest.js";
 
 const PLUGIN_ORIGIN = `plugin:${manifest.id}` as const;
 
-type PlaceholderResponse = {
-  status: "not_configured";
-  routeKey: string;
+type InitializeInput = {
   companyId: string;
-  issueId: string | null;
-  findingKey: string | null;
-  message: string;
+  issueId: string;
+  actorAgentId?: string | null;
+  actorUserId?: string | null;
+  actorRunId?: string | null;
+};
+
+type DecomposeInput = {
+  companyId: string;
+  issueId: string;
+  dryRun?: boolean;
+  actorAgentId?: string | null;
+  actorUserId?: string | null;
+  actorRunId?: string | null;
+};
+
+type AdvanceInput = {
+  companyId: string;
+  issueId: string;
+  maxValidationRounds?: number;
+  actorAgentId?: string | null;
+  actorUserId?: string | null;
+  actorRunId?: string | null;
+};
+
+type WaiveInput = {
+  companyId: string;
+  issueId: string;
+  findingId: string;
+  rationale: string;
+  actorAgentId?: string | null;
+  actorUserId?: string | null;
+  actorRunId?: string | null;
 };
 
 type SurfaceStatus = {
@@ -21,118 +57,91 @@ type SurfaceStatus = {
   routeKeys: string[];
   uiSlotIds: string[];
   pluginId: string;
-  message: string;
-};
-
-type MissionSummary = {
-  status: "not_configured";
-  companyId: string;
-  issueId: string;
-  missionIssueId: string;
-  missionIdentifier: string | null;
-  missionTitle: string;
-  childIssueCount: number;
-  documentCount: number;
-  blockerCount: number;
-  routeKeys: string[];
-  uiSlotIds: string[];
-  databaseNamespace: string;
-  message: string;
-};
-
-type MissionsListItem = {
-  issueId: string;
-  identifier: string | null;
-  title: string;
-  status: Issue["status"];
 };
 
 type MissionsList = {
-  status: "not_configured";
+  status: "ok";
   companyId: string;
-  missions: MissionsListItem[];
-  routeKeys: string[];
-  pageRoute: string;
-  message: string;
+  missions: Array<{
+    issueId: string;
+    identifier: string | null;
+    title: string;
+    status: string;
+  }>;
 };
 
-let getSurfaceStatus: ((companyId: string | null) => Promise<SurfaceStatus>) | null = null;
-let getMissionSummary: ((companyId: string, issueId: string) => Promise<MissionSummary>) | null = null;
-let getMissionsList: ((companyId: string) => Promise<MissionsList>) | null = null;
+let runInitialize: ((input: InitializeInput) => Promise<MissionInitializationResult>) | null = null;
+let runDecompose: ((input: DecomposeInput) => Promise<MissionDecompositionResult>) | null = null;
+let loadMissionSummary: ((companyId: string, issueId: string) => Promise<MissionSummary>) | null = null;
+let runAdvance: ((input: AdvanceInput) => Promise<MissionAdvanceResult>) | null = null;
+let runWaive: ((input: WaiveInput) => Promise<MissionWaiveFindingResult>) | null = null;
+let listMissions: ((companyId: string) => Promise<MissionsList>) | null = null;
 
-function requireString(value: unknown, field: string): string {
-  if (typeof value !== "string" || value.trim().length === 0) {
-    throw new Error(`${field} is required`);
-  }
-  return value.trim();
+function stringField(value: unknown) {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 }
 
-async function requireIssue(ctx: PluginContext, companyId: string, issueId: string) {
-  const issue = await ctx.issues.get(issueId, companyId);
-  if (!issue) throw new Error(`Issue not found: ${issueId}`);
-  return issue;
+function booleanField(value: unknown) {
+  return value === true || value === "true";
 }
 
-function buildPlaceholderResponse(input: {
-  routeKey: string;
-  companyId: string;
-  issueId?: string | null;
-  findingKey?: string | null;
-}): PlaceholderResponse {
-  return {
-    status: "not_configured",
-    routeKey: input.routeKey,
-    companyId: input.companyId,
-    issueId: input.issueId ?? null,
-    findingKey: input.findingKey ?? null,
-    message: "Missions Phase 0 scaffold is installed. Runtime behavior lands in follow-up issues.",
-  };
+function numberField(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 const plugin = definePlugin({
   async setup(ctx) {
-    getSurfaceStatus = async (companyId) => ({
-      status: "ok",
-      checkedAt: new Date().toISOString(),
-      companyId,
-      databaseNamespace: ctx.db.namespace,
-      routeKeys: [...MISSIONS_API_ROUTE_KEYS],
-      uiSlotIds: [...MISSIONS_UI_SLOT_IDS],
-      pluginId: ctx.manifest.id,
-      message: "Missions scaffold loaded successfully.",
-    });
+    runInitialize = async (input: InitializeInput) =>
+      initializeMission(ctx, {
+        companyId: input.companyId,
+        issueId: input.issueId,
+        actorAgentId: input.actorAgentId ?? null,
+        actorUserId: input.actorUserId ?? null,
+        actorRunId: input.actorRunId ?? null,
+      });
 
-    getMissionSummary = async (companyId, issueId) => {
-      const issue = await requireIssue(ctx, companyId, issueId);
-      const subtree = await ctx.issues.getSubtree(issueId, companyId, { includeRoot: false });
-      const documents = await ctx.issues.documents.list(issueId, companyId);
-      const relations = await ctx.issues.relations.get(issueId, companyId);
+    runDecompose = async (input: DecomposeInput) =>
+      decomposeMission(ctx, {
+        companyId: input.companyId,
+        issueId: input.issueId,
+        dryRun: input.dryRun,
+        actor: {
+          actorAgentId: input.actorAgentId ?? null,
+          actorUserId: input.actorUserId ?? null,
+          actorRunId: input.actorRunId ?? null,
+        },
+      });
 
-      return {
-        status: "not_configured",
-        companyId,
-        issueId,
-        missionIssueId: issue.id,
-        missionIdentifier: issue.identifier,
-        missionTitle: issue.title,
-        childIssueCount: subtree.issueIds.length,
-        documentCount: documents.length,
-        blockerCount: relations.blockedBy.length,
-        routeKeys: [...MISSIONS_API_ROUTE_KEYS],
-        uiSlotIds: [...MISSIONS_UI_SLOT_IDS],
-        databaseNamespace: ctx.db.namespace,
-        message: "Mission summary is a scaffold response until the runtime issues land.",
-      };
-    };
+    loadMissionSummary = async (companyId: string, issueId: string) => buildMissionSummary(ctx, companyId, issueId);
 
-    getMissionsList = async (companyId) => {
+    runAdvance = async (input: AdvanceInput) =>
+      advanceMission(ctx, {
+        companyId: input.companyId,
+        issueId: input.issueId,
+        maxValidationRounds: input.maxValidationRounds,
+        actorAgentId: input.actorAgentId ?? null,
+        actorUserId: input.actorUserId ?? null,
+        actorRunId: input.actorRunId ?? null,
+      });
+
+    runWaive = async (input: WaiveInput) =>
+      waiveMissionFinding(ctx, {
+        companyId: input.companyId,
+        issueId: input.issueId,
+        findingId: input.findingId,
+        rationale: input.rationale,
+        actorAgentId: input.actorAgentId ?? null,
+        actorUserId: input.actorUserId ?? null,
+        actorRunId: input.actorRunId ?? null,
+      });
+
+    listMissions = async (companyId: string) => {
       const issues = await ctx.issues.list({
         companyId,
         originKind: PLUGIN_ORIGIN,
       });
-
       return {
-        status: "not_configured",
+        status: "ok",
         companyId,
         missions: issues.map((issue) => ({
           issueId: issue.id,
@@ -140,145 +149,205 @@ const plugin = definePlugin({
           title: issue.title,
           status: issue.status,
         })),
-        routeKeys: [...MISSIONS_API_ROUTE_KEYS],
-        pageRoute: "missions",
-        message: "Mission list wiring is present. Mission lifecycle behavior is not implemented in Phase 0.",
       };
     };
 
-    ctx.data.register("surface-status", async (params) => {
-      if (!getSurfaceStatus) throw new Error("Surface status is not ready");
-      const companyId = typeof params.companyId === "string" ? params.companyId : null;
-      return getSurfaceStatus(companyId);
-    });
+    ctx.data.register("surface-status", async (params) => ({
+      status: "ok",
+      checkedAt: new Date().toISOString(),
+      companyId: stringField(params.companyId),
+      databaseNamespace: ctx.db.namespace,
+      routeKeys: [...MISSIONS_API_ROUTE_KEYS],
+      uiSlotIds: [...MISSIONS_UI_SLOT_IDS],
+      pluginId: manifest.id,
+    } satisfies SurfaceStatus));
 
     ctx.data.register("mission-summary", async (params) => {
-      const companyId = requireString(params.companyId, "companyId");
-      const issueId = requireString(params.issueId, "issueId");
-      if (!getMissionSummary) throw new Error("Mission summary is not ready");
-      return getMissionSummary(companyId, issueId);
+      const companyId = stringField(params.companyId);
+      const issueId = stringField(params.issueId);
+      if (!companyId || !issueId) throw new Error("companyId and issueId are required");
+      if (!loadMissionSummary) throw new Error("Mission summary is not ready");
+      return loadMissionSummary(companyId, issueId);
     });
 
     ctx.data.register("missions-list", async (params) => {
-      const companyId = requireString(params.companyId, "companyId");
-      if (!getMissionsList) throw new Error("Missions list is not ready");
-      return getMissionsList(companyId);
+      const companyId = stringField(params.companyId);
+      if (!companyId) throw new Error("companyId is required");
+      if (!listMissions) throw new Error("Mission list is not ready");
+      return listMissions(companyId);
     });
 
     ctx.actions.register("initialize-mission", async (params) => {
-      const companyId = requireString(params.companyId, "companyId");
-      const issueId = requireString(params.issueId, "issueId");
-      await requireIssue(ctx, companyId, issueId);
-      return buildPlaceholderResponse({ routeKey: "initialize-mission", companyId, issueId });
+      const companyId = stringField(params.companyId);
+      const issueId = stringField(params.issueId);
+      if (!companyId || !issueId) throw new Error("companyId and issueId are required");
+      if (!runInitialize) throw new Error("Mission initialization is not ready");
+      return runInitialize({
+        companyId,
+        issueId,
+        actorAgentId: stringField(params.actorAgentId),
+        actorUserId: stringField(params.actorUserId),
+        actorRunId: stringField(params.actorRunId),
+      });
     });
 
     ctx.actions.register("decompose-mission", async (params) => {
-      const companyId = requireString(params.companyId, "companyId");
-      const issueId = requireString(params.issueId, "issueId");
-      await requireIssue(ctx, companyId, issueId);
-      return buildPlaceholderResponse({ routeKey: "decompose-mission", companyId, issueId });
+      const companyId = stringField(params.companyId);
+      const issueId = stringField(params.issueId);
+      if (!companyId || !issueId) throw new Error("companyId and issueId are required");
+      if (!runDecompose) throw new Error("Mission decomposition is not ready");
+      return runDecompose({
+        companyId,
+        issueId,
+        dryRun: booleanField(params.dryRun),
+        actorAgentId: stringField(params.actorAgentId),
+        actorUserId: stringField(params.actorUserId),
+        actorRunId: stringField(params.actorRunId),
+      });
     });
 
     ctx.actions.register("advance-mission", async (params) => {
-      const companyId = requireString(params.companyId, "companyId");
-      const issueId = requireString(params.issueId, "issueId");
-      await requireIssue(ctx, companyId, issueId);
-      return buildPlaceholderResponse({ routeKey: "advance-mission", companyId, issueId });
+      const companyId = stringField(params.companyId);
+      const issueId = stringField(params.issueId);
+      if (!companyId || !issueId) throw new Error("companyId and issueId are required");
+      if (!runAdvance) throw new Error("Mission advance is not ready");
+      return runAdvance({
+        companyId,
+        issueId,
+        maxValidationRounds: numberField(params.maxValidationRounds),
+        actorAgentId: stringField(params.actorAgentId),
+        actorUserId: stringField(params.actorUserId),
+        actorRunId: stringField(params.actorRunId),
+      });
     });
 
     ctx.actions.register("waive-mission-finding", async (params) => {
-      const companyId = requireString(params.companyId, "companyId");
-      const issueId = requireString(params.issueId, "issueId");
-      const findingKey = requireString(params.findingKey, "findingKey");
-      requireString(params.rationale, "rationale");
-      await requireIssue(ctx, companyId, issueId);
-      return buildPlaceholderResponse({
-        routeKey: "waive-mission-finding",
+      const companyId = stringField(params.companyId);
+      const issueId = stringField(params.issueId);
+      const findingId = stringField(params.findingId) ?? stringField(params.findingKey);
+      const rationale = stringField(params.rationale);
+      if (!companyId || !issueId || !findingId || !rationale) {
+        throw new Error("companyId, issueId, findingId, and rationale are required");
+      }
+      if (!runWaive) throw new Error("Mission waiver flow is not ready");
+      return runWaive({
         companyId,
         issueId,
-        findingKey,
+        findingId,
+        rationale,
+        actorAgentId: stringField(params.actorAgentId),
+        actorUserId: stringField(params.actorUserId),
+        actorRunId: stringField(params.actorRunId),
       });
     });
   },
 
   async onApiRequest(input: PluginApiRequestInput) {
-    switch (input.routeKey) {
-      case "initialize-mission":
-        return {
-          status: 202,
-          body: buildPlaceholderResponse({
-            routeKey: input.routeKey,
-            companyId: input.companyId,
-            issueId: input.params.issueId,
-          }),
-        };
+    if (input.routeKey === "initialize-mission") {
+      if (!runInitialize) throw new Error("Mission initialization is not ready");
+      const result = await runInitialize({
+        companyId: input.companyId,
+        issueId: input.params.issueId,
+        actorAgentId: input.actor.agentId ?? null,
+        actorUserId: input.actor.userId ?? null,
+        actorRunId: input.actor.runId ?? null,
+      });
+      return {
+        status: result.created ? 201 : 200,
+        body: result,
+      };
+    }
 
-      case "mission-summary":
-        if (!getMissionSummary) throw new Error("Mission summary is not ready");
-        return {
-          status: 200,
-          body: await getMissionSummary(input.companyId, input.params.issueId),
-        };
+    if (input.routeKey === "mission-summary") {
+      if (!loadMissionSummary) throw new Error("Mission summary is not ready");
+      return {
+        status: 200,
+        body: await loadMissionSummary(input.companyId, input.params.issueId),
+      };
+    }
 
-      case "decompose-mission":
-      case "advance-mission":
-        return {
-          status: 202,
-          body: buildPlaceholderResponse({
-            routeKey: input.routeKey,
-            companyId: input.companyId,
-            issueId: input.params.issueId,
-          }),
-        };
+    if (input.routeKey === "decompose-mission") {
+      if (!runDecompose) throw new Error("Mission decomposition is not ready");
+      const body = input.body as Record<string, unknown> | null;
+      return {
+        status: 200,
+        body: await runDecompose({
+          companyId: input.companyId,
+          issueId: input.params.issueId,
+          dryRun: booleanField(body?.dryRun),
+          actorAgentId: input.actor.agentId ?? null,
+          actorUserId: input.actor.userId ?? null,
+          actorRunId: input.actor.runId ?? null,
+        }),
+      };
+    }
 
-      case "waive-mission-finding": {
-        const rationale = (input.body as Record<string, unknown> | null)?.rationale;
-        if (typeof rationale !== "string" || rationale.trim().length === 0) {
-          return {
-            status: 422,
-            body: { error: "rationale is required" },
-          };
-        }
+    if (input.routeKey === "advance-mission") {
+      if (!runAdvance) throw new Error("Mission advance is not ready");
+      const body = input.body as Record<string, unknown> | null;
+      return {
+        status: 200,
+        body: await runAdvance({
+          companyId: input.companyId,
+          issueId: input.params.issueId,
+          maxValidationRounds: numberField(body?.maxValidationRounds),
+          actorAgentId: input.actor.agentId ?? null,
+          actorUserId: input.actor.userId ?? null,
+          actorRunId: input.actor.runId ?? null,
+        }),
+      };
+    }
+
+    if (input.routeKey === "waive-mission-finding") {
+      if (!runWaive) throw new Error("Mission waiver flow is not ready");
+      const body = input.body as Record<string, unknown> | null;
+      const rationale = stringField(body?.rationale);
+      const findingId = input.params.findingKey ?? input.params.findingId;
+      if (!rationale) {
         return {
-          status: 202,
-          body: buildPlaceholderResponse({
-            routeKey: input.routeKey,
-            companyId: input.companyId,
-            issueId: input.params.issueId,
-            findingKey: input.params.findingKey,
-          }),
+          status: 422,
+          body: { error: "rationale is required" },
         };
       }
-
-      case "missions-list":
-        if (!getMissionsList) throw new Error("Missions list is not ready");
-        return {
-          status: 200,
-          body: await getMissionsList(input.companyId),
-        };
-
-      default:
-        return {
-          status: 404,
-          body: { error: `Unknown missions route: ${input.routeKey}` },
-        };
+      return {
+        status: 200,
+        body: await runWaive({
+          companyId: input.companyId,
+          issueId: input.params.issueId,
+          findingId,
+          rationale,
+          actorAgentId: input.actor.agentId ?? null,
+          actorUserId: input.actor.userId ?? null,
+          actorRunId: input.actor.runId ?? null,
+        }),
+      };
     }
+
+    if (input.routeKey === "missions-list") {
+      if (!listMissions) throw new Error("Mission list is not ready");
+      return {
+        status: 200,
+        body: await listMissions(input.companyId),
+      };
+    }
+
+    return {
+      status: 404,
+      body: { error: `Unknown missions route: ${input.routeKey}` },
+    };
   },
 
   async onHealth() {
     return {
       status: "ok",
-      message: "Missions plugin scaffold is running",
+      message: "Missions plugin worker is running",
       details: {
-        pluginId: manifest.id,
         routeKeys: [...MISSIONS_API_ROUTE_KEYS],
         uiSlotIds: [...MISSIONS_UI_SLOT_IDS],
-        hasDatabaseNamespace: Boolean(manifest.database),
       },
     };
   },
 });
 
 export default plugin;
-
 runWorker(plugin, import.meta.url);

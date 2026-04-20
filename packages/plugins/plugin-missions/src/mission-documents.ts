@@ -1,7 +1,6 @@
 export {
   MISSION_FINDING_WAIVER_MARKER_PREFIX,
   MISSION_REQUIRED_DOCUMENT_KEYS,
-  buildMissionFindingWaiverEntry,
   parseMissionFeaturesDocument,
   parseMissionValidationContractDocument,
   parseMissionValidationReportDocument,
@@ -16,6 +15,7 @@ export {
 export { isMissionRequiredDocumentKey } from "./mission/index.js";
 
 import {
+  buildMissionFindingWaiverEntry as buildMissionFindingWaiverEntryBase,
   isMissionValidationReportKey,
   missionFindingWaiverMarker,
   parseMissionFindingWaivers as parseMissionFindingWaiversBase,
@@ -74,6 +74,18 @@ export function buildMissionEventEntry(input: {
       "",
       ...input.lines.map((line) => `- ${line}`),
     ].join("\n"),
+  };
+}
+
+export function buildMissionFindingWaiverEntry(input: {
+  findingId: string;
+  rationale: string;
+  actorLabel: string;
+  createdAt: Date | string;
+}) {
+  return {
+    marker: missionFindingWaiverMarker(input.findingId),
+    body: buildMissionFindingWaiverEntryBase(input),
   };
 }
 

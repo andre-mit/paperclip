@@ -32,6 +32,7 @@
     "zod": "^3.24.2"
   },
   "devDependencies": {
+    "@paperclipai/shared": "workspace:*",
     "@rollup/plugin-node-resolve": "^16.0.1",
     "@rollup/plugin-typescript": "^12.1.2",
     "@types/node": "^24.6.0",

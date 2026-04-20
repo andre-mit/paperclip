@@ -1,10 +1,8 @@
-import { readFileSync } from "node:fs";
-import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import type { Issue } from "@paperclipai/plugin-sdk";
+import type { Agent, Issue } from "@paperclipai/plugin-sdk";
 import { createTestHarness } from "@paperclipai/plugin-sdk/testing";
-import manifest, { MISSIONS_API_ROUTE_KEYS, MISSIONS_UI_SLOT_IDS } from "../src/manifest.js";
+import manifest from "../src/manifest.js";
 import plugin from "../src/worker.js";
 
 const PLUGIN_ORIGIN = `plugin:${manifest.id}` as const;
@@ -52,252 +50,411 @@ function issue(input: Partial<Issue> & Pick<Issue, "id" | "companyId" | "title">
   };
 }
 
-describe("missions plugin scaffold", () => {
-  it("declares the phase 0 routes, slots, and namespace migration contract", () => {
+function agent(input: Partial<Agent> & Pick<Agent, "id" | "companyId" | "name" | "status">): Agent {
+  const now = new Date();
+  const { id, companyId, name, status, ...rest } = input;
+  return {
+    id,
+    companyId,
+    name,
+    urlKey: name.toLowerCase().replace(/[^a-z0-9]+/g, "-"),
+    role: "engineer",
+    title: null,
+    icon: null,
+    status,
+    reportsTo: null,
+    capabilities: null,
+    adapterType: "codex_local",
+    adapterConfig: {},
+    runtimeConfig: {},
+    budgetMonthlyCents: 100000,
+    spentMonthlyCents: 0,
+    pauseReason: null,
+    pausedAt: null,
+    permissions: { canCreateAgents: false },
+    lastHeartbeatAt: null,
+    metadata: null,
+    createdAt: now,
+    updatedAt: now,
+    ...rest,
+  };
+}
+
+async function upsertMissionDocuments(
+  harness: ReturnType<typeof createTestHarness>,
+  companyId: string,
+  issueId: string,
+) {
+  const docs = new Map<string, string>([
+    ["plan", "# Mission Plan\n"],
+    ["mission-brief", "# Mission Brief\n"],
+    [
+      "validation-contract",
+      JSON.stringify(
+        {
+          assertions: [
+            {
+              id: "VAL-MISSION-001",
+              title: "Mission validation",
+              user_value: "Advance loop works",
+              scope: "Mission runtime",
+              setup: "Plugin test harness",
+              steps: ["Advance the mission"],
+              oracle: "Only valid issues are woken",
+              tooling: ["manual_review"],
+              evidence: [{ kind: "primary", description: "Mission summary", required: true }],
+              claimed_by: ["FEAT-MISSION-001"],
+              status: "unclaimed",
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+    ],
+    [
+      "features",
+      JSON.stringify(
+        {
+          milestones: [
+            {
+              id: "MILESTONE-MISSION-001",
+              title: "Core Mission Flow",
+              summary: "Advance and validation loop",
+              features: [
+                {
+                  id: "FEAT-MISSION-001",
+                  title: "Advance mission",
+                  kind: "original",
+                  summary: "Drive assigned work forward",
+                  acceptance_criteria: ["Wake assigned and unblocked work"],
+                  claimed_assertion_ids: ["VAL-MISSION-001"],
+                  status: "planned",
+                },
+              ],
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+    ],
+    ["worker-guidelines", "# Worker Guidelines\n"],
+    ["services", "# Services\n"],
+    ["knowledge-base", "# Knowledge Base\n"],
+    ["decision-log", "# Decision Log\n"],
+  ]);
+
+  for (const [key, body] of docs) {
+    await harness.ctx.issues.documents.upsert({
+      issueId,
+      companyId,
+      key,
+      title: key,
+      body,
+      changeSummary: `Seeded ${key}`,
+    });
+  }
+}
+
+describe("missions plugin package", () => {
+  it("declares mission initialization surfaces", () => {
     expect(manifest).toMatchObject({
       id: "paperclipai.plugin-missions",
-      apiVersion: 1,
       database: {
         namespaceSlug: "missions",
         migrationsDir: "migrations",
         coreReadTables: ["issues"],
       },
     });
-
-    expect(manifest.apiRoutes?.map((route) => route.routeKey)).toEqual(MISSIONS_API_ROUTE_KEYS);
-    expect(manifest.ui?.slots?.map((slot) => slot.id)).toEqual(MISSIONS_UI_SLOT_IDS);
+    expect(manifest.apiRoutes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ routeKey: "initialize-mission", path: "/issues/:issueId/missions/init" }),
+        expect.objectContaining({ routeKey: "mission-summary", path: "/issues/:issueId/missions/summary" }),
+      ]),
+    );
     expect(manifest.ui?.slots).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ type: "page", routePath: "missions" }),
-        expect.objectContaining({ type: "taskDetailView", entityTypes: ["issue"] }),
-        expect.objectContaining({ type: "toolbarButton", entityTypes: ["issue"] }),
-        expect.objectContaining({ type: "settingsPage" }),
+        expect.objectContaining({ type: "page", exportName: "MissionsPage" }),
+        expect.objectContaining({ type: "taskDetailView", exportName: "MissionIssuePanel" }),
+        expect.objectContaining({ type: "toolbarButton", exportName: "MissionToolbarButton" }),
+      ]),
+    );
+  });
+
+  it("initializes a root mission, creates required documents, and returns a draft summary", async () => {
+    const companyId = randomUUID();
+    const rootIssueId = randomUUID();
+    const harness = createTestHarness({ manifest });
+    harness.seed({
+      issues: [
+        issue({
+          id: rootIssueId,
+          companyId,
+          title: "Initialize the mission root",
+          identifier: "TST-1",
+        }),
+      ],
+    });
+    await plugin.definition.setup(harness.ctx);
+
+    const result = await harness.performAction<{
+      created: boolean;
+      createdDocumentKeys: string[];
+      summary: {
+        isMission: boolean;
+        state: string | null;
+        persistence: { hasRootLink: boolean; hasInitializationEvent: boolean } | null;
+      };
+    }>("initialize-mission", {
+      companyId,
+      issueId: rootIssueId,
+    });
+
+    expect(result.created).toBe(true);
+    expect(result.createdDocumentKeys).toHaveLength(8);
+    expect(result.summary).toMatchObject({
+      isMission: true,
+      state: "draft",
+      persistence: {
+        hasRootLink: true,
+        hasInitializationEvent: true,
+      },
+    });
+
+    const rootIssue = await harness.ctx.issues.get(rootIssueId, companyId);
+    expect(rootIssue).toMatchObject({
+      originKind: "plugin:paperclipai.plugin-missions",
+      originId: `mission:${rootIssueId}`,
+      billingCode: `mission:${rootIssueId}`,
+    });
+
+    const docs = await harness.ctx.issues.documents.list(rootIssueId, companyId);
+    expect(new Set(docs.map((document) => document.key))).toEqual(
+      new Set([
+        "plan",
+        "mission-brief",
+        "validation-contract",
+        "features",
+        "worker-guidelines",
+        "services",
+        "knowledge-base",
+        "decision-log",
       ]),
     );
 
-    const migrationsDir = path.resolve(import.meta.dirname, "../migrations");
-    const firstMigration = readFileSync(path.join(migrationsDir, "001_mission_issue_links.sql"), "utf8");
-    const secondMigration = readFileSync(path.join(migrationsDir, "002_missions.sql"), "utf8");
-    expect(firstMigration).toContain("plugin_missions_8ceb7cd69c.mission_issue_links");
-    expect(secondMigration).toContain("plugin_missions_8ceb7cd69c.missions");
-    expect(secondMigration).toContain("plugin_missions_8ceb7cd69c.mission_findings");
-    expect(secondMigration).toContain("plugin_missions_8ceb7cd69c.mission_events");
+    expect(harness.dbExecutes.some((entry) => entry.sql.includes(".missions"))).toBe(true);
+    expect(harness.dbExecutes.some((entry) => entry.sql.includes(".mission_issue_links"))).toBe(true);
+    expect(harness.dbExecutes.some((entry) => entry.sql.includes(".mission_events"))).toBe(true);
   });
 
-  it("registers placeholder data and action handlers backed by the worker shell", async () => {
+  it("keeps initialization idempotent and surfaces parse errors in the summary", async () => {
     const companyId = randomUUID();
-    const missionIssueId = randomUUID();
-    const childIssueId = randomUUID();
-    const blockerIssueId = randomUUID();
+    const rootIssueId = randomUUID();
     const harness = createTestHarness({ manifest });
-
     harness.seed({
       issues: [
         issue({
-          id: missionIssueId,
+          id: rootIssueId,
           companyId,
-          title: "Mission root",
-          identifier: "PAP-1684",
-          originKind: PLUGIN_ORIGIN,
-        }),
-        issue({
-          id: childIssueId,
-          companyId,
-          parentId: missionIssueId,
-          title: "Mission child",
-          originKind: `${PLUGIN_ORIGIN}:feature`,
-        }),
-        issue({
-          id: blockerIssueId,
-          companyId,
-          title: "Upstream blocker",
+          title: "Mission with parser errors",
         }),
       ],
     });
+    await plugin.definition.setup(harness.ctx);
+
+    await harness.performAction("initialize-mission", { companyId, issueId: rootIssueId });
+    const second = await harness.performAction<{
+      created: boolean;
+      createdDocumentKeys: string[];
+      summary: { isMission: boolean; state: string | null };
+    }>("initialize-mission", { companyId, issueId: rootIssueId });
+    expect(second.created).toBe(false);
+    expect(second.createdDocumentKeys).toEqual([]);
+    expect(second.summary).toMatchObject({
+      isMission: true,
+      state: "draft",
+    });
+
     await harness.ctx.issues.documents.upsert({
-      issueId: missionIssueId,
+      issueId: rootIssueId,
       companyId,
-      key: "mission-brief",
-      title: "Mission Brief",
-      body: "# Mission Brief\n",
-      changeSummary: "Seed mission brief",
+      key: "validation-contract",
+      title: "Validation Contract",
+      body: "{ not-valid-json }",
     });
-    await harness.ctx.issues.relations.setBlockedBy(missionIssueId, [blockerIssueId], companyId);
-    await plugin.definition.setup(harness.ctx);
-
-    const surfaceStatus = await harness.getData<{
-      pluginId: string;
-      routeKeys: string[];
-      uiSlotIds: string[];
-      databaseNamespace: string;
-    }>("surface-status", { companyId });
-    expect(surfaceStatus).toMatchObject({
-      pluginId: manifest.id,
-      routeKeys: [...MISSIONS_API_ROUTE_KEYS],
-      uiSlotIds: [...MISSIONS_UI_SLOT_IDS],
-    });
-    expect(surfaceStatus.databaseNamespace).toContain("test_paperclipai_plugin_missions");
-
     const summary = await harness.getData<{
-      missionIssueId: string;
-      childIssueCount: number;
-      documentCount: number;
-      blockerCount: number;
-      status: string;
-    }>("mission-summary", { companyId, issueId: missionIssueId });
-    expect(summary).toMatchObject({
-      missionIssueId,
-      childIssueCount: 1,
-      documentCount: 1,
-      blockerCount: 1,
-      status: "not_configured",
-    });
-
-    const missionsList = await harness.getData<MissionsListResult>("missions-list", { companyId });
-    expect(missionsList).toMatchObject({
+      isMission: boolean;
+      parseProblems: Array<{ key: string }>;
+    }>("mission-summary", {
       companyId,
-      pageRoute: "missions",
-      status: "not_configured",
-      routeKeys: [...MISSIONS_API_ROUTE_KEYS],
-      message: "Mission list wiring is present. Mission lifecycle behavior is not implemented in Phase 0.",
+      issueId: rootIssueId,
     });
-    expect(missionsList.missions).toEqual([
-      {
-        issueId: missionIssueId,
-        identifier: "PAP-1684",
-        title: "Mission root",
-        status: "todo",
-      },
-    ]);
-
-    await expect(
-      harness.performAction("initialize-mission", { companyId, issueId: missionIssueId }),
-    ).resolves.toMatchObject({
-      routeKey: "initialize-mission",
-      issueId: missionIssueId,
-      status: "not_configured",
-    });
-
-    await expect(plugin.definition.onHealth?.()).resolves.toMatchObject({
-      status: "ok",
-      details: {
-        pluginId: manifest.id,
-        routeKeys: [...MISSIONS_API_ROUTE_KEYS],
-        uiSlotIds: [...MISSIONS_UI_SLOT_IDS],
-      },
-    });
+    expect(summary.isMission).toBe(true);
+    expect(summary.parseProblems).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ key: "validation-contract" }),
+      ]),
+    );
   });
 
-  it("dispatches scoped api routes with placeholder bodies and validates waiver input", async () => {
+  it("wakes assigned unblocked work and creates a single fix issue for blocking findings", async () => {
     const companyId = randomUUID();
-    const missionIssueId = randomUUID();
+    const rootIssueId = randomUUID();
+    const readyFeatureId = randomUUID();
+    const validationIssueId = randomUUID();
+    const agentId = randomUUID();
     const harness = createTestHarness({ manifest });
-
     harness.seed({
+      agents: [agent({ id: agentId, companyId, name: "Worker", status: "active" })],
       issues: [
         issue({
-          id: missionIssueId,
+          id: rootIssueId,
           companyId,
           title: "Mission root",
-          identifier: "PAP-1684",
+          assigneeAgentId: agentId,
           originKind: PLUGIN_ORIGIN,
+        }),
+        issue({
+          id: readyFeatureId,
+          companyId,
+          parentId: rootIssueId,
+          title: "Ready feature",
+          assigneeAgentId: agentId,
+          originKind: `${PLUGIN_ORIGIN}:feature`,
+          originId: "FEAT-MISSION-001",
+        }),
+        issue({
+          id: validationIssueId,
+          companyId,
+          parentId: rootIssueId,
+          title: "Validation round",
+          status: "done",
+          assigneeAgentId: agentId,
+          originKind: `${PLUGIN_ORIGIN}:validation`,
+          originId: "VAL-ROUND-001",
         }),
       ],
     });
     await plugin.definition.setup(harness.ctx);
-
-    await expect(
-      plugin.definition.onApiRequest?.({
-        routeKey: "initialize-mission",
-        method: "POST",
-        path: `/issues/${missionIssueId}/missions/init`,
-        params: { issueId: missionIssueId },
-        query: {},
-        body: {},
-        actor: {
-          actorType: "user",
-          actorId: "board",
-          userId: "board",
-          agentId: null,
-          runId: null,
-        },
-        companyId,
-        headers: {},
-      }),
-    ).resolves.toMatchObject({
-      status: 202,
-      body: {
-        routeKey: "initialize-mission",
-        issueId: missionIssueId,
-        status: "not_configured",
-      },
-    });
-
-    await expect(
-      plugin.definition.onApiRequest?.({
-        routeKey: "mission-summary",
-        method: "GET",
-        path: `/issues/${missionIssueId}/missions/summary`,
-        params: { issueId: missionIssueId },
-        query: {},
-        body: null,
-        actor: {
-          actorType: "user",
-          actorId: "board",
-          userId: "board",
-          agentId: null,
-          runId: null,
-        },
-        companyId,
-        headers: {},
-      }),
-    ).resolves.toMatchObject({
-      status: 200,
-      body: {
-        missionIssueId,
-        status: "not_configured",
-      },
-    });
-
-    await expect(
-      plugin.definition.onApiRequest?.({
-        routeKey: "missions-list",
-        method: "GET",
-        path: "/missions",
-        params: {},
-        query: { companyId },
-        body: null,
-        actor: {
-          actorType: "user",
-          actorId: "board",
-          userId: "board",
-          agentId: null,
-          runId: null,
-        },
-        companyId,
-        headers: {},
-      }),
-    ).resolves.toMatchObject({
-      status: 200,
-      body: {
-        missions: [
+    await upsertMissionDocuments(harness, companyId, rootIssueId);
+    await harness.ctx.issues.documents.upsert({
+      issueId: validationIssueId,
+      companyId,
+      key: "validation-report-round-1",
+      title: "Validation Report Round 1",
+      body: JSON.stringify({
+        round: 1,
+        validator_role: "scrutiny_validator",
+        summary: "Found one blocking issue",
+        findings: [
           {
-            issueId: missionIssueId,
-            identifier: "PAP-1684",
-            title: "Mission root",
-            status: "todo",
+            id: "FINDING-MISSION-001",
+            severity: "blocking",
+            assertion_id: "VAL-MISSION-001",
+            title: "Advance skips fix loop",
+            evidence: ["Validation report"],
+            repro_steps: ["Run advance mission"],
+            expected: "Blocking findings create one fix issue",
+            actual: "No fix issue existed",
+            status: "open",
           },
         ],
-        status: "not_configured",
-      },
+      }),
+      changeSummary: "Seeded validation findings",
+    });
+
+    const firstAdvance = await harness.performAction<{
+      outcome: string;
+      createdFixIssueIds: string[];
+      wokenIssueIds: string[];
+    }>("advance-mission", {
+      companyId,
+      issueId: rootIssueId,
+      actorAgentId: agentId,
+      actorRunId: "run_1",
+    });
+    const secondAdvance = await harness.performAction<{ createdFixIssueIds: string[] }>("advance-mission", {
+      companyId,
+      issueId: rootIssueId,
+      actorAgentId: agentId,
+      actorRunId: "run_2",
+    });
+
+    const fixIssues = await harness.ctx.issues.list({
+      companyId,
+      originKind: `${PLUGIN_ORIGIN}:fix`,
+    });
+
+    expect(firstAdvance.outcome).toBe("woke_issues");
+    expect(firstAdvance.wokenIssueIds).toEqual(expect.arrayContaining([readyFeatureId]));
+    expect(firstAdvance.createdFixIssueIds).toHaveLength(1);
+    expect(secondAdvance.createdFixIssueIds).toEqual(firstAdvance.createdFixIssueIds);
+    expect(fixIssues).toHaveLength(1);
+  });
+
+  it("requires waiver rationale and records approved waivers", async () => {
+    const companyId = randomUUID();
+    const rootIssueId = randomUUID();
+    const validationIssueId = randomUUID();
+    const agentId = randomUUID();
+    const harness = createTestHarness({ manifest });
+    harness.seed({
+      agents: [agent({ id: agentId, companyId, name: "Worker", status: "active" })],
+      issues: [
+        issue({
+          id: rootIssueId,
+          companyId,
+          title: "Mission root",
+          assigneeAgentId: agentId,
+          originKind: PLUGIN_ORIGIN,
+        }),
+        issue({
+          id: validationIssueId,
+          companyId,
+          parentId: rootIssueId,
+          title: "Validation round",
+          status: "done",
+          assigneeAgentId: agentId,
+          originKind: `${PLUGIN_ORIGIN}:validation`,
+          originId: "VAL-ROUND-001",
+        }),
+      ],
+    });
+    await plugin.definition.setup(harness.ctx);
+    await upsertMissionDocuments(harness, companyId, rootIssueId);
+    await harness.ctx.issues.documents.upsert({
+      issueId: validationIssueId,
+      companyId,
+      key: "validation-report-round-1",
+      title: "Validation Report Round 1",
+      body: JSON.stringify({
+        round: 1,
+        validator_role: "scrutiny_validator",
+        summary: "Found one blocking issue",
+        findings: [
+          {
+            id: "FINDING-MISSION-001",
+            severity: "blocking",
+            assertion_id: "VAL-MISSION-001",
+            title: "Advance skips fix loop",
+            evidence: ["Validation report"],
+            repro_steps: ["Run advance mission"],
+            expected: "Blocking findings create one fix issue",
+            actual: "No fix issue existed",
+            status: "open",
+          },
+        ],
+      }),
+      changeSummary: "Seeded validation findings",
     });
 
     await expect(
       plugin.definition.onApiRequest?.({
         routeKey: "waive-mission-finding",
         method: "POST",
-        path: `/issues/${missionIssueId}/missions/findings/FINDING-001/waive`,
-        params: { issueId: missionIssueId, findingKey: "FINDING-001" },
+        path: `/issues/${rootIssueId}/missions/findings/FINDING-MISSION-001/waive`,
+        params: { issueId: rootIssueId, findingKey: "FINDING-MISSION-001" },
         query: {},
         body: {},
         actor: {
@@ -319,10 +476,10 @@ describe("missions plugin scaffold", () => {
       plugin.definition.onApiRequest?.({
         routeKey: "waive-mission-finding",
         method: "POST",
-        path: `/issues/${missionIssueId}/missions/findings/FINDING-001/waive`,
-        params: { issueId: missionIssueId, findingKey: "FINDING-001" },
+        path: `/issues/${rootIssueId}/missions/findings/FINDING-MISSION-001/waive`,
+        params: { issueId: rootIssueId, findingKey: "FINDING-MISSION-001" },
         query: {},
-        body: { rationale: "Defer to follow-up issue" },
+        body: { rationale: "Known acceptable risk for this mission" },
         actor: {
           actorType: "user",
           actorId: "board",
@@ -334,50 +491,52 @@ describe("missions plugin scaffold", () => {
         headers: {},
       }),
     ).resolves.toMatchObject({
-      status: 202,
-      body: {
-        routeKey: "waive-mission-finding",
-        issueId: missionIssueId,
-        findingKey: "FINDING-001",
-        status: "not_configured",
-      },
+      status: 200,
+      body: expect.objectContaining({
+        waived: true,
+        findingId: "FINDING-MISSION-001",
+      }),
     });
+  });
+
+  it("enforces checkout ownership for agent-triggered initialization on in-progress issues", async () => {
+    const companyId = randomUUID();
+    const rootIssueId = randomUUID();
+    const agentId = randomUUID();
+    const runId = randomUUID();
+    const harness = createTestHarness({ manifest });
+    harness.seed({
+      issues: [
+        issue({
+          id: rootIssueId,
+          companyId,
+          title: "Checked out mission root",
+          status: "in_progress",
+          assigneeAgentId: agentId,
+          checkoutRunId: runId,
+        }),
+      ],
+    });
+    await plugin.definition.setup(harness.ctx);
 
     await expect(
       plugin.definition.onApiRequest?.({
-        routeKey: "unknown-route",
-        method: "GET",
-        path: "/unknown",
-        params: {},
+        routeKey: "initialize-mission",
+        method: "POST",
+        path: `/issues/${rootIssueId}/missions/init`,
+        params: { issueId: rootIssueId },
         query: {},
-        body: null,
+        body: {},
         actor: {
-          actorType: "user",
-          actorId: "board",
-          userId: "board",
-          agentId: null,
-          runId: null,
+          actorType: "agent",
+          actorId: agentId,
+          agentId,
+          userId: null,
+          runId: randomUUID(),
         },
         companyId,
         headers: {},
       }),
-    ).resolves.toMatchObject({
-      status: 404,
-      body: { error: "Unknown missions route: unknown-route" },
-    });
+    ).rejects.toThrow("Issue run ownership conflict");
   });
 });
-
-type MissionsListResult = {
-  status: string;
-  companyId: string;
-  missions: Array<{
-    issueId: string;
-    identifier: string | null;
-    title: string;
-    status: string;
-  }>;
-  routeKeys: string[];
-  pageRoute: string;
-  message: string;
-};

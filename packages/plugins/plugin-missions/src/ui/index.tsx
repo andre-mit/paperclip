@@ -7,6 +7,8 @@ import {
   type PluginSettingsPageProps,
 } from "@paperclipai/plugin-sdk/ui";
 import type React from "react";
+import { useState } from "react";
+import type { MissionInitializationResult, MissionIssueSummary } from "../mission-initialization.js";
 
 type EntitySlotProps = {
   context: PluginHostContext & {
@@ -26,24 +28,7 @@ type SurfaceStatus = {
   message: string;
 };
 
-type MissionSummary = {
-  status: "not_configured";
-  companyId: string;
-  issueId: string;
-  missionIssueId: string;
-  missionIdentifier: string | null;
-  missionTitle: string;
-  childIssueCount: number;
-  documentCount: number;
-  blockerCount: number;
-  routeKeys: string[];
-  uiSlotIds: string[];
-  databaseNamespace: string;
-  message: string;
-};
-
 type MissionsList = {
-  status: "not_configured";
   companyId: string;
   missions: Array<{
     issueId: string;
@@ -94,30 +79,68 @@ const secondaryButtonStyle = {
   color: "#111827",
 } satisfies React.CSSProperties;
 
-function IssueScopedPanel({
-  data,
-  onAdvance,
-}: {
-  data: MissionSummary;
-  onAdvance: () => Promise<void>;
-}) {
+function SummaryRows({ data }: { data: MissionIssueSummary }) {
   return (
-    <div style={panelStyle}>
-      <div style={rowStyle}>
-        <strong>Mission Scaffold</strong>
-        <button style={buttonStyle} type="button" onClick={() => void onAdvance()}>
-          Advance
-        </button>
-      </div>
-      <div style={gridStyle}>
-        <div style={rowStyle}><span>Issue</span><code>{data.missionIdentifier ?? data.issueId}</code></div>
-        <div style={rowStyle}><span>Children</span><strong>{data.childIssueCount}</strong></div>
-        <div style={rowStyle}><span>Documents</span><strong>{data.documentCount}</strong></div>
-        <div style={rowStyle}><span>Blockers</span><strong>{data.blockerCount}</strong></div>
-        <div style={rowStyle}><span>Namespace</span><code>{data.databaseNamespace}</code></div>
-      </div>
-      <div>{data.message}</div>
+    <div style={gridStyle}>
+      <div style={rowStyle}><span>State</span><strong>{data.state ?? "not-initialized"}</strong></div>
+      <div style={rowStyle}><span>Billing</span><code>{data.settings.billingCode ?? "unset"}</code></div>
+      <div style={rowStyle}><span>Namespace</span><code>{data.settings.databaseNamespace}</code></div>
+      <div style={rowStyle}><span>Open Findings</span><strong>{data.openFindingCount}</strong></div>
     </div>
+  );
+}
+
+function Checklist({ data }: { data: MissionIssueSummary }) {
+  return (
+    <div style={gridStyle}>
+      {data.documentChecklist.map((item) => (
+        <div key={item.key} style={rowStyle}>
+          <code>{item.key}</code>
+          <strong>{item.present ? item.title ?? "present" : "missing"}</strong>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function InitializeMissionButton({
+  companyId,
+  issueId,
+  disabledReason,
+  onDone,
+}: {
+  companyId: string;
+  issueId: string;
+  disabledReason: string | null;
+  onDone?: (result: MissionInitializationResult) => Promise<void> | void;
+}) {
+  const initializeMission = usePluginAction("initialize-mission");
+  const toast = usePluginToast();
+  const [pending, setPending] = useState(false);
+
+  return (
+    <button
+      style={buttonStyle}
+      type="button"
+      disabled={pending || Boolean(disabledReason)}
+      title={disabledReason ?? undefined}
+      onClick={async () => {
+        setPending(true);
+        try {
+          const result = await initializeMission({ companyId, issueId }) as MissionInitializationResult;
+          toast({
+            title: result.created ? "Mission initialized" : "Mission already initialized",
+            body: result.summary.nextAction,
+            tone: "success",
+          });
+          await onDone?.(result);
+        } finally {
+          setPending(false);
+        }
+      }}
+    >
+      {pending ? "Initializing..." : "Init Mission"}
+    </button>
   );
 }
 
@@ -128,7 +151,7 @@ export function MissionsPage({ context }: PluginPageProps) {
   });
 
   if (!companyId) return <div style={panelStyle}>Open a company to view missions.</div>;
-  if (loading) return <div style={panelStyle}>Loading missions scaffold...</div>;
+  if (loading) return <div style={panelStyle}>Loading missions...</div>;
   if (error) return <div style={panelStyle}>Missions page error: {error.message}</div>;
   if (!data) return null;
 
@@ -142,7 +165,7 @@ export function MissionsPage({ context }: PluginPageProps) {
       </div>
       <div>{data.message}</div>
       {data.missions.length === 0 ? (
-        <div>No mission issues are registered yet.</div>
+        <div>No root mission issues have been initialized yet.</div>
       ) : (
         <div style={gridStyle}>
           {data.missions.map((mission) => (
@@ -158,56 +181,77 @@ export function MissionsPage({ context }: PluginPageProps) {
 }
 
 export function MissionIssuePanel({ context }: EntitySlotProps) {
-  const { data, loading, error, refresh } = usePluginData<MissionSummary>("mission-summary", {
+  const { data, loading, error, refresh } = usePluginData<MissionIssueSummary>("mission-summary", {
     companyId: context.companyId,
     issueId: context.entityId,
   });
-  const advanceMission = usePluginAction("advance-mission");
-  const toast = usePluginToast();
 
   if (!context.companyId || !context.entityId) {
     return <div style={panelStyle}>Mission controls need an issue context.</div>;
   }
-  if (loading) return <div style={panelStyle}>Loading mission scaffold...</div>;
+  if (loading) return <div style={panelStyle}>Loading mission summary...</div>;
   if (error) return <div style={panelStyle}>Mission panel error: {error.message}</div>;
   if (!data) return null;
 
+  if (!data.isMission) {
+    return (
+      <div style={panelStyle}>
+        <strong>Mission</strong>
+        <div>This issue has not been initialized as a mission yet.</div>
+        <div>{data.nextAction}</div>
+        <InitializeMissionButton
+          companyId={context.companyId}
+          issueId={context.entityId}
+          disabledReason={data.initializeDisabledReason}
+          onDone={async () => {
+            await refresh();
+          }}
+        />
+      </div>
+    );
+  }
+
   return (
-    <IssueScopedPanel
-      data={data}
-      onAdvance={async () => {
-        await advanceMission({ companyId: context.companyId, issueId: context.entityId });
-        toast({
-          title: "Mission route reserved",
-          body: "Advance is wired, but runtime behavior lands in a follow-up issue.",
-          tone: "info",
-        });
-        refresh();
-      }}
-    />
+    <div style={panelStyle}>
+      <div style={rowStyle}>
+        <strong>Mission</strong>
+        <button style={secondaryButtonStyle} type="button" onClick={() => refresh()}>
+          Refresh
+        </button>
+      </div>
+      <SummaryRows data={data} />
+      <div><strong>Next action:</strong> {data.nextAction}</div>
+      <Checklist data={data} />
+      {data.parseProblems.length > 0 ? (
+        <div style={gridStyle}>
+          {data.parseProblems.map((problem) => (
+            <div key={`${problem.key}:${problem.message}`} style={{ color: "#b45309" }}>
+              <code>{problem.key}</code>: {problem.message}
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
 export function MissionToolbarButton({ context }: EntitySlotProps) {
-  const initializeMission = usePluginAction("initialize-mission");
-  const toast = usePluginToast();
+  const { data, loading, refresh } = usePluginData<MissionIssueSummary>("mission-summary", {
+    companyId: context.companyId,
+    issueId: context.entityId,
+  });
+
+  if (!context.companyId || !context.entityId || loading || !data || data.isMission) return null;
 
   return (
-    <button
-      style={buttonStyle}
-      type="button"
-      onClick={async () => {
-        if (!context.companyId || !context.entityId) return;
-        await initializeMission({ companyId: context.companyId, issueId: context.entityId });
-        toast({
-          title: "Mission scaffold ready",
-          body: "Initialization is wired to the worker shell.",
-          tone: "success",
-        });
+    <InitializeMissionButton
+      companyId={context.companyId}
+      issueId={context.entityId}
+      disabledReason={data.initializeDisabledReason}
+      onDone={async () => {
+        await refresh();
       }}
-    >
-      Init Mission
-    </button>
+    />
   );
 }
 

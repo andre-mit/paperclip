@@ -4,24 +4,26 @@ First-party Missions plugin package for the current Paperclip alpha plugin runti
 
 This package now carries the installable mission workflow surface:
 
-- manifest id `paperclip.missions`
+- manifest id `paperclipai.plugin-missions`
 - scoped plugin API routes under `/api/plugins/:pluginId/api/*`
 - namespace migrations for mission-owned tables
-- worker handlers for mission initialization, decomposition, summary, advance, and waivers
+- worker handlers for mission initialization, draft summary reads, and placeholder follow-up workflow routes
 - package-local typecheck, test, and build verification
 
 ## Declared Surfaces
 
 - API routes
   - `POST /issues/:issueId/missions/init`
-  - `POST /issues/:issueId/decompose`
-  - `GET /issues/:issueId/mission/summary`
-  - `POST /issues/:issueId/mission/advance`
-  - `POST /issues/:issueId/mission/findings/:findingId/waive`
+  - `GET /issues/:issueId/missions/summary`
+  - `POST /issues/:issueId/missions/decompose`
+  - `POST /issues/:issueId/missions/advance`
+  - `POST /issues/:issueId/missions/findings/:findingKey/waive`
+  - `GET /missions`
 - UI slots
+  - plugin `page`
   - issue `taskDetailView`
   - issue `toolbarButton`
-  - plugin `dashboardWidget`
+  - plugin `settingsPage`
 
 ## Verify
 
