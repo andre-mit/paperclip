@@ -50,6 +50,12 @@ import {
   getDefaultPluginMemoryProviderDispatcher,
   type PluginMemoryProviderDispatcher,
 } from "./plugin-memory-provider-dispatcher.js";
+import {
+  buildPostRunCaptureTrace,
+  buildPreRunHydrateTrace,
+  buildSkippedMemoryHookTrace,
+  type MemoryHookTrace,
+} from "./memory-hook-trace.js";
 
 type ActorInfo = {
   actorType: "agent" | "user" | "system";
@@ -64,6 +70,15 @@ type TargetRow = typeof memoryBindingTargets.$inferSelect;
 type OperationRow = typeof memoryOperations.$inferSelect;
 type RecordRow = typeof memoryLocalRecords.$inferSelect;
 type ExtractionJobRow = typeof memoryExtractionJobs.$inferSelect;
+
+export interface MemoryPreRunHydrateResult {
+  preamble: string | null;
+  trace: MemoryHookTrace;
+}
+
+export interface MemoryPostRunCaptureResult {
+  trace: MemoryHookTrace;
+}
 
 const LOCAL_BASIC_PROVIDER_KEY = "local_basic";
 
@@ -1661,7 +1676,7 @@ export function memoryService(
       issueId?: string | null;
       runId: string;
       query: string;
-    }) => {
+    }): Promise<MemoryPreRunHydrateResult> => {
       const resolved = await resolveBindingInternal(
         input.companyId,
         {
@@ -1673,10 +1688,24 @@ export function memoryService(
         null,
       );
       if (!resolved.binding || !resolved.binding.enabled) {
-        return null;
+        return {
+          preamble: null,
+          trace: buildSkippedMemoryHookTrace({
+            hookKind: "pre_run_hydrate",
+            reason: resolved.binding ? "binding_disabled" : "no_binding",
+            binding: resolved.binding ? mapBinding(resolved.binding) : null,
+          }),
+        };
       }
       if (!isHookEnabled(resolved.binding, "preRunHydrate")) {
-        return null;
+        return {
+          preamble: null,
+          trace: buildSkippedMemoryHookTrace({
+            hookKind: "pre_run_hydrate",
+            reason: "hook_disabled",
+            binding: mapBinding(resolved.binding),
+          }),
+        };
       }
       const result = await service.query(
         input.companyId,
@@ -1703,7 +1732,10 @@ export function memoryService(
         "hook",
         "pre_run_hydrate",
       );
-      return result.preamble;
+      return {
+        preamble: result.preamble,
+        trace: buildPreRunHydrateTrace(mapBinding(resolved.binding), result),
+      };
     },
 
     captureRunSummary: async (input: {
@@ -1714,7 +1746,7 @@ export function memoryService(
       runId: string;
       title?: string | null;
       summary: string;
-    }) => {
+    }): Promise<MemoryPostRunCaptureResult> => {
       const resolved = await resolveBindingInternal(
         input.companyId,
         {
@@ -1726,12 +1758,24 @@ export function memoryService(
         null,
       );
       if (!resolved.binding || !resolved.binding.enabled) {
-        return null;
+        return {
+          trace: buildSkippedMemoryHookTrace({
+            hookKind: "post_run_capture",
+            reason: resolved.binding ? "binding_disabled" : "no_binding",
+            binding: resolved.binding ? mapBinding(resolved.binding) : null,
+          }),
+        };
       }
       if (!isHookEnabled(resolved.binding, "postRunCapture")) {
-        return null;
+        return {
+          trace: buildSkippedMemoryHookTrace({
+            hookKind: "post_run_capture",
+            reason: "hook_disabled",
+            binding: mapBinding(resolved.binding),
+          }),
+        };
       }
-      return service.capture(
+      const result = await service.capture(
         input.companyId,
         {
           scope: {
@@ -1768,6 +1812,9 @@ export function memoryService(
         "hook",
         "post_run_capture",
       );
+      return {
+        trace: buildPostRunCaptureTrace(mapBinding(resolved.binding), result),
+      };
     },
 
     captureIssueComment: async (input: {

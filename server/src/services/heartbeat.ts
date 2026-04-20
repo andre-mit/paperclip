@@ -39,6 +39,12 @@ import {
   summarizeHeartbeatRunResultJson,
 } from "./heartbeat-run-summary.js";
 import {
+  buildErroredMemoryHookTrace,
+  buildSkippedMemoryHookTrace,
+  formatMemoryHookTraceLog,
+  type MemoryHookTrace,
+} from "./memory-hook-trace.js";
+import {
   buildWorkspaceReadyComment,
   cleanupExecutionWorkspaceArtifacts,
   ensureRuntimeServicesForRun,
@@ -3137,7 +3143,7 @@ export function heartbeatService(
         .where(eq(heartbeatRuns.id, runId));
 
       const currentUserRedactionOptions = await getCurrentUserRedactionOptions();
-      const onLog = async (stream: "stdout" | "stderr", chunk: string) => {
+      const appendLog = async (stream: "stdout" | "stderr" | "system", chunk: string) => {
         const sanitizedChunk = redactCurrentUserText(chunk, currentUserRedactionOptions);
         if (stream === "stdout") stdoutExcerpt = appendExcerpt(stdoutExcerpt, sanitizedChunk);
         if (stream === "stderr") stderrExcerpt = appendExcerpt(stderrExcerpt, sanitizedChunk);
@@ -3167,6 +3173,17 @@ export function heartbeatService(
             chunk: payloadChunk,
             truncated: payloadChunk.length !== sanitizedChunk.length,
           },
+        });
+      };
+      const onLog = async (stream: "stdout" | "stderr", chunk: string) => appendLog(stream, chunk);
+      const appendMemoryTrace = async (trace: MemoryHookTrace) => {
+        await appendLog("system", formatMemoryHookTraceLog(trace));
+        await appendRunEvent(currentRun, seq++, {
+          eventType: "memory.trace",
+          stream: trace.status === "errored" ? "stderr" : "system",
+          level: trace.status === "errored" ? "error" : trace.status === "skipped" ? "warn" : "info",
+          message: formatMemoryHookTraceLog(trace).trim(),
+          payload: trace as unknown as Record<string, unknown>,
         });
       };
       for (const warning of runtimeWorkspaceWarnings) {
@@ -3224,7 +3241,7 @@ export function heartbeatService(
       }
       if (issueRef) {
         try {
-          const memoryPreamble = await memorySvc.preRunHydrate({
+          const memoryHydration = await memorySvc.preRunHydrate({
             companyId: agent.companyId,
             agentId: agent.id,
             projectId: issueRef.projectId ?? null,
@@ -3234,8 +3251,9 @@ export function heartbeatService(
               .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
               .join("\n"),
           });
-          if (memoryPreamble) {
-            context.paperclipMemoryPreamble = memoryPreamble;
+          await appendMemoryTrace(memoryHydration.trace);
+          if (memoryHydration.preamble) {
+            context.paperclipMemoryPreamble = memoryHydration.preamble;
             await db
               .update(heartbeatRuns)
               .set({
@@ -3245,11 +3263,13 @@ export function heartbeatService(
               .where(eq(heartbeatRuns.id, run.id));
           }
         } catch (err) {
-          await onLog(
-            "stderr",
-            `[paperclip] Failed to hydrate memory: ${err instanceof Error ? err.message : String(err)}\n`,
-          );
+          await appendMemoryTrace(buildErroredMemoryHookTrace({ hookKind: "pre_run_hydrate", error: err }));
         }
+      } else {
+        await appendMemoryTrace(buildSkippedMemoryHookTrace({
+          hookKind: "pre_run_hydrate",
+          reason: "no_issue_context",
+        }));
       }
       const onAdapterMeta = async (meta: AdapterInvocationMeta) => {
         if (meta.env && secretKeys.size > 0) {
@@ -3378,9 +3398,6 @@ export function heartbeatService(
       }
 
       let logSummary: { bytes: number; sha256?: string; compressed: boolean } | null = null;
-      if (handle) {
-        logSummary = await runLogStore.finalize(handle);
-      }
 
       const status =
         outcome === "succeeded"
@@ -3421,6 +3438,34 @@ export function heartbeatService(
         adapterResult.resultJson ?? null,
         adapterResult.summary ?? null,
       );
+      const memorySummary =
+        buildHeartbeatRunIssueComment(adapterResult.resultJson ?? null)
+        ?? (typeof adapterResult.summary === "string" ? adapterResult.summary.trim() || null : null);
+      if (memorySummary) {
+        try {
+          const captureResult = await memorySvc.captureRunSummary({
+            companyId: agent.companyId,
+            agentId: agent.id,
+            projectId: issueRef?.projectId ?? null,
+            issueId: issueRef?.id ?? null,
+            runId: run.id,
+            title: issueRef?.title ? `Run summary: ${issueRef.title}` : "Run summary",
+            summary: memorySummary,
+          });
+          await appendMemoryTrace(captureResult.trace);
+        } catch (err) {
+          await appendMemoryTrace(buildErroredMemoryHookTrace({ hookKind: "post_run_capture", error: err }));
+        }
+      } else {
+        await appendMemoryTrace(buildSkippedMemoryHookTrace({
+          hookKind: "post_run_capture",
+          reason: "no_run_summary",
+        }));
+      }
+
+      if (handle) {
+        logSummary = await runLogStore.finalize(handle);
+      }
 
       await setRunStatus(run.id, status, {
         finishedAt: new Date(),
@@ -3478,27 +3523,6 @@ export function heartbeatService(
             await onLog(
               "stderr",
               `[paperclip] Failed to post run summary comment: ${err instanceof Error ? err.message : String(err)}\n`,
-            );
-          }
-        }
-        const memorySummary =
-          buildHeartbeatRunIssueComment(adapterResult.resultJson ?? null)
-          ?? (typeof adapterResult.summary === "string" ? adapterResult.summary.trim() || null : null);
-        if (memorySummary) {
-          try {
-            await memorySvc.captureRunSummary({
-              companyId: agent.companyId,
-              agentId: agent.id,
-              projectId: issueRef?.projectId ?? null,
-              issueId: issueRef?.id ?? null,
-              runId: finalizedRun.id,
-              title: issueRef?.title ? `Run summary: ${issueRef.title}` : "Run summary",
-              summary: memorySummary,
-            });
-          } catch (err) {
-            await onLog(
-              "stderr",
-              `[paperclip] Failed to capture run summary to memory: ${err instanceof Error ? err.message : String(err)}\n`,
             );
           }
         }
