@@ -1,5 +1,20 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { BookOpen, CheckCircle2, FlaskConical, Layers3, Route, ShieldCheck } from "lucide-react";
+import {
+  BookOpen,
+  Bot,
+  CheckCircle2,
+  FlaskConical,
+  FolderKanban,
+  FormInput,
+  Layers3,
+  LayoutDashboard,
+  ListTodo,
+  MessageSquare,
+  PanelLeft,
+  Route,
+  ShieldCheck,
+  Wallet,
+} from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
@@ -22,6 +37,54 @@ const storyGroups = [
     stories: "Issue chat, run transcripts, invite/access flows",
     why: "The old `/tests/ux/*` pages are fixture-backed Storybook stories now.",
   },
+  {
+    title: "Navigation & Layout",
+    icon: PanelLeft,
+    stories: "Sidebar, breadcrumbs, command palette, company rail, mobile nav",
+    why: "Navigation chrome frames every board interaction and needs mobile parity.",
+  },
+  {
+    title: "Agent Management",
+    icon: Bot,
+    stories: "Agent properties, config forms, icon picker, action buttons",
+    why: "Agent lifecycle is the primary governance surface for operators.",
+  },
+  {
+    title: "Issue Management",
+    icon: ListTodo,
+    stories: "Issue lists, filters, properties, documents, run ledger, workspace cards",
+    why: "Issues are the core work unit — every view state matters for scan speed.",
+  },
+  {
+    title: "Forms & Editors",
+    icon: FormInput,
+    stories: "Markdown editor, JSON schema forms, env vars, schedule editor, pickers",
+    why: "Rich editors need isolated review for empty, filled, and validation states.",
+  },
+  {
+    title: "Budget & Finance",
+    icon: Wallet,
+    stories: "Incident cards, provider quotas, biller spend, subscription panels",
+    why: "Financial controls are safety-critical and need threshold state coverage.",
+  },
+  {
+    title: "Dialogs & Modals",
+    icon: LayoutDashboard,
+    stories: "New issue/agent/goal/project dialogs, diff modal, image gallery",
+    why: "Dialogs interrupt flow — they must be scannable and self-explanatory.",
+  },
+  {
+    title: "Projects & Goals",
+    icon: FolderKanban,
+    stories: "Project properties, workspace cards, goal trees, runtime controls",
+    why: "Hierarchical views (goals, projects, workspaces) need expand/collapse coverage.",
+  },
+  {
+    title: "Chat & Comments",
+    icon: MessageSquare,
+    stories: "Comment threads, run chat, issue chat with timeline events",
+    why: "Threaded conversations mix agent/user/system authors and need density review.",
+  },
 ];
 
 const coverageRows = [
@@ -32,7 +95,16 @@ const coverageRows = [
   ["Budget controls", "Covered", "Healthy, warning, hard-stop, compact, plain, and editable card variants"],
   ["Execution UX", "Covered", "Run transcript detail, live widget, dashboard card, streaming and settled views"],
   ["Invite UX", "Covered", "Fixture-backed access roles, invite landing, pending, accepted, expired, and error states"],
-  ["Full app pages", "Deferred", "API-driven route stories should be added after page data loaders can be fixture-injected"],
+  ["Navigation & layout", "Planned", "Sidebar, breadcrumbs, command palette, company rail, mobile nav"],
+  ["Agent management", "Planned", "Agent properties, config forms, icon picker, action buttons, active panel"],
+  ["Issue management", "Planned", "Issue lists, filters, properties, documents, run ledger, workspace cards"],
+  ["Forms & editors", "Planned", "Markdown editor, JSON schema, env vars, schedule editor, pickers"],
+  ["Budget & finance", "Planned", "Incident cards, provider quotas, biller spend, subscription panels"],
+  ["Dialogs & modals", "Planned", "New issue/agent/goal/project dialogs, diff modal, image gallery"],
+  ["Projects & goals", "Planned", "Project properties, workspace cards, goal trees, runtime controls"],
+  ["Chat & comments", "Planned", "Comment threads, run chat, issue chat with timeline events"],
+  ["Data viz & misc", "Planned", "Activity charts, kanban, filter bar, live widget, onboarding, skeletons"],
+  ["Full app pages", "Deferred", "API-driven route stories after page data loaders can be fixture-injected"],
 ];
 
 function StorybookGuide() {
@@ -63,7 +135,7 @@ function StorybookGuide() {
           </div>
         </section>
 
-        <section className="grid gap-4 md:grid-cols-3">
+        <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {storyGroups.map((group) => {
             const Icon = group.icon;
             return (
@@ -97,6 +169,7 @@ function StorybookGuide() {
                 <div>
                   <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background px-2 py-0.5 text-xs text-muted-foreground">
                     {status === "Covered" ? <CheckCircle2 className="h-3 w-3 text-emerald-500" /> : null}
+                    {status === "Planned" ? <Route className="h-3 w-3 text-cyan-500" /> : null}
                     {status}
                   </span>
                 </div>
