@@ -7,9 +7,12 @@ import {
   agentWakeupRequests,
   companies,
   createDb,
+  documentRevisions,
+  documents,
   heartbeatRunEvents,
   heartbeatRuns,
   issueComments,
+  issueDocuments,
   issueRelations,
   issues,
 } from "@paperclipai/db";
@@ -93,6 +96,9 @@ describeEmbeddedPostgres("heartbeat dependency-aware queued run selection", () =
     vi.clearAllMocks();
     runningProcesses.clear();
     await db.delete(issueComments);
+    await db.delete(issueDocuments);
+    await db.delete(documentRevisions);
+    await db.delete(documents);
     await db.delete(issueRelations);
     await db.delete(issues);
     await db.delete(heartbeatRunEvents);
