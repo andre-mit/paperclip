@@ -104,6 +104,7 @@ fi
 
 curl -sS -X PATCH \
   "$PAPERCLIP_API_URL/api/issues/$issue_id" \
+  --fail \
   --connect-timeout "${PAPERCLIP_API_CONNECT_TIMEOUT_SECONDS:-10}" \
   --max-time "${PAPERCLIP_API_MAX_TIME_SECONDS:-60}" \
   -H "Authorization: Bearer $PAPERCLIP_API_KEY" \

@@ -34,7 +34,7 @@ echo ""
 
 for i in "${!pids[@]}"; do
   line="${lines[$i]}"
-  pid=$(echo "$line" | awk '{print $2}')
+  pid="${pids[$i]}"
   start=$(echo "$line" | awk '{print $9}')
   cmd=$(echo "$line" | awk '{for(i=11;i<=NF;i++) printf "%s ", $i; print ""}')
   cmd=$(echo "$cmd" | sed "s|$HOME/||g")
