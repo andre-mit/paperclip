@@ -298,6 +298,262 @@ describe("missions plugin package", () => {
     );
   });
 
+  it("decomposes mission documents into an idempotent issue tree with blocker relations", async () => {
+    const companyId = randomUUID();
+    const rootIssueId = randomUUID();
+    const executionWorkspaceId = randomUUID();
+    const executionWorkspaceSettings = { mode: "reuse_existing" } as const;
+    const harness = createTestHarness({ manifest });
+    harness.seed({
+      issues: [
+        issue({
+          id: rootIssueId,
+          companyId,
+          title: "Mission root",
+          identifier: "TST-42",
+          billingCode: "missions:root",
+          projectId: randomUUID(),
+          goalId: randomUUID(),
+          executionWorkspaceId,
+          executionWorkspacePreference: "reuse_existing",
+          executionWorkspaceSettings,
+        }),
+      ],
+    });
+    await plugin.definition.setup(harness.ctx);
+    await upsertMissionDocuments(harness, companyId, rootIssueId);
+
+    await harness.ctx.issues.documents.upsert({
+      issueId: rootIssueId,
+      companyId,
+      key: "validation-contract",
+      title: "Validation Contract",
+      body: JSON.stringify(
+        {
+          assertions: [
+            {
+              id: "VAL-MISSION-001",
+              title: "Foundation works",
+              user_value: "Foundation milestone works",
+              scope: "Foundation milestone",
+              setup: "Mission harness",
+              steps: ["Finish the foundation feature"],
+              oracle: "Foundation feature passes validation",
+              tooling: ["manual_review"],
+              evidence: [{ kind: "primary", description: "Foundation validation", required: true }],
+              claimed_by: ["FEAT-MISSION-001"],
+              status: "claimed",
+            },
+            {
+              id: "VAL-MISSION-002",
+              title: "Rollout works",
+              user_value: "Rollout milestone works",
+              scope: "Rollout milestone",
+              setup: "Mission harness",
+              steps: ["Finish the rollout feature"],
+              oracle: "Rollout feature passes validation",
+              tooling: ["manual_review"],
+              evidence: [{ kind: "primary", description: "Rollout validation", required: true }],
+              claimed_by: ["FEAT-MISSION-002"],
+              status: "claimed",
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+      changeSummary: "Seeded decomposition validation contract",
+    });
+    await harness.ctx.issues.documents.upsert({
+      issueId: rootIssueId,
+      companyId,
+      key: "features",
+      title: "Features",
+      body: JSON.stringify(
+        {
+          milestones: [
+            {
+              id: "MILESTONE-MISSION-001",
+              title: "Foundation",
+              summary: "Create the base mission workflow",
+              depends_on: [],
+              features: [
+                {
+                  id: "FEAT-MISSION-001",
+                  title: "Seed mission tree",
+                  kind: "original",
+                  summary: "Create the first generated issues",
+                  acceptance_criteria: ["Create milestone, feature, and validation issues"],
+                  claimed_assertion_ids: ["VAL-MISSION-001"],
+                  depends_on: [],
+                  status: "planned",
+                },
+              ],
+            },
+            {
+              id: "MILESTONE-MISSION-002",
+              title: "Rollout",
+              summary: "Advance work after foundation validation",
+              depends_on: ["MILESTONE-MISSION-001"],
+              features: [
+                {
+                  id: "FEAT-MISSION-002",
+                  title: "Ship decomposition",
+                  kind: "original",
+                  summary: "Create the dependent rollout issue",
+                  acceptance_criteria: ["Rollout waits for foundation validation"],
+                  claimed_assertion_ids: ["VAL-MISSION-002"],
+                  depends_on: ["FEAT-MISSION-001"],
+                  status: "planned",
+                },
+              ],
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+      changeSummary: "Seeded decomposition feature plan",
+    });
+
+    const first = await harness.performAction<{
+      milestoneCount: number;
+      featureCount: number;
+      validationCount: number;
+      createdIssueIds: string[];
+      updatedIssueIds: string[];
+      issues: Array<{ key: string; issueId: string; created: boolean; blockedByIssueIds: string[] }>;
+    }>("decompose-mission", {
+      companyId,
+      issueId: rootIssueId,
+    });
+    const second = await harness.performAction<{
+      createdIssueIds: string[];
+      updatedIssueIds: string[];
+      issues: Array<{ key: string; issueId: string; created: boolean; blockedByIssueIds: string[] }>;
+    }>("decompose-mission", {
+      companyId,
+      issueId: rootIssueId,
+    });
+
+    expect(first).toMatchObject({
+      milestoneCount: 2,
+      featureCount: 2,
+      validationCount: 2,
+    });
+    expect(first.createdIssueIds).toHaveLength(6);
+    expect(first.updatedIssueIds).toEqual([]);
+    expect(second.createdIssueIds).toEqual([]);
+    expect(second.updatedIssueIds).toHaveLength(6);
+    expect(new Set(second.issues.map((entry) => entry.issueId))).toEqual(new Set(first.createdIssueIds));
+
+    const milestone1 = (
+      await harness.ctx.issues.list({
+        companyId,
+        originKind: `${PLUGIN_ORIGIN}:milestone`,
+        originId: `${rootIssueId}:milestone:MILESTONE-MISSION-001`,
+      })
+    )[0];
+    const milestone2 = (
+      await harness.ctx.issues.list({
+        companyId,
+        originKind: `${PLUGIN_ORIGIN}:milestone`,
+        originId: `${rootIssueId}:milestone:MILESTONE-MISSION-002`,
+      })
+    )[0];
+    const feature1 = (
+      await harness.ctx.issues.list({
+        companyId,
+        originKind: `${PLUGIN_ORIGIN}:feature`,
+        originId: `${rootIssueId}:feature:FEAT-MISSION-001`,
+      })
+    )[0];
+    const feature2 = (
+      await harness.ctx.issues.list({
+        companyId,
+        originKind: `${PLUGIN_ORIGIN}:feature`,
+        originId: `${rootIssueId}:feature:FEAT-MISSION-002`,
+      })
+    )[0];
+    const validation1 = (
+      await harness.ctx.issues.list({
+        companyId,
+        originKind: `${PLUGIN_ORIGIN}:validation`,
+        originId: `${rootIssueId}:validation:MILESTONE-MISSION-001`,
+      })
+    )[0];
+    const validation2 = (
+      await harness.ctx.issues.list({
+        companyId,
+        originKind: `${PLUGIN_ORIGIN}:validation`,
+        originId: `${rootIssueId}:validation:MILESTONE-MISSION-002`,
+      })
+    )[0];
+
+    expect([milestone1, milestone2, feature1, feature2, validation1, validation2]).toHaveLength(6);
+
+    for (const generatedIssue of [milestone1, milestone2, feature1, feature2, validation1, validation2]) {
+      expect(generatedIssue).toMatchObject({
+        billingCode: "missions:root",
+        executionWorkspaceId,
+        executionWorkspacePreference: "reuse_existing",
+        executionWorkspaceSettings,
+      });
+    }
+
+    expect(milestone1).toMatchObject({
+      parentId: rootIssueId,
+      status: "blocked",
+    });
+    expect(milestone2).toMatchObject({
+      parentId: rootIssueId,
+      status: "blocked",
+    });
+    expect(feature1).toMatchObject({
+      parentId: milestone1?.id,
+      status: "todo",
+    });
+    expect(feature2).toMatchObject({
+      parentId: milestone2?.id,
+      status: "blocked",
+    });
+    expect(validation1).toMatchObject({
+      parentId: milestone1?.id,
+      status: "blocked",
+    });
+    expect(validation2).toMatchObject({
+      parentId: milestone2?.id,
+      status: "blocked",
+    });
+
+    expect(await harness.ctx.issues.relations.get(feature1!.id, companyId)).toMatchObject({
+      blockedBy: [],
+    });
+    expect(await harness.ctx.issues.relations.get(validation1!.id, companyId)).toMatchObject({
+      blockedBy: [expect.objectContaining({ id: feature1!.id })],
+    });
+    expect(await harness.ctx.issues.relations.get(milestone1!.id, companyId)).toMatchObject({
+      blockedBy: [expect.objectContaining({ id: validation1!.id })],
+    });
+    expect(await harness.ctx.issues.relations.get(feature2!.id, companyId)).toMatchObject({
+      blockedBy: expect.arrayContaining([
+        expect.objectContaining({ id: feature1!.id }),
+        expect.objectContaining({ id: validation1!.id }),
+      ]),
+    });
+    expect(await harness.ctx.issues.relations.get(validation2!.id, companyId)).toMatchObject({
+      blockedBy: [expect.objectContaining({ id: feature2!.id })],
+    });
+    expect(await harness.ctx.issues.relations.get(milestone2!.id, companyId)).toMatchObject({
+      blockedBy: expect.arrayContaining([
+        expect.objectContaining({ id: validation1!.id }),
+        expect.objectContaining({ id: validation2!.id }),
+      ]),
+    });
+
+    expect(harness.dbExecutes.some((entry) => entry.sql.includes(".mission_issue_links"))).toBe(true);
+  });
+
   it("wakes assigned unblocked work and creates a single fix issue for blocking findings", async () => {
     const companyId = randomUUID();
     const rootIssueId = randomUUID();
