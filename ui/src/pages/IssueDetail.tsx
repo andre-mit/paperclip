@@ -96,6 +96,7 @@ import {
   Copy,
   EyeOff,
   Hexagon,
+  ListTree,
   MessageSquare,
   MoreHorizontal,
   MoreVertical,
