@@ -346,7 +346,7 @@ describeEmbeddedPostgres("heartbeat dependency-aware queued run selection", () =
     expect(blockedWakeRequestCount).toBeGreaterThanOrEqual(2);
   });
 
-  it("suppresses descendant wakeups while allowing root course-correction comment wakes under a pause hold", async () => {
+  it("suppresses normal wakeups while allowing comment interaction wakes under a pause hold", async () => {
     const companyId = randomUUID();
     const agentId = randomUUID();
     const rootIssueId = randomUUID();
@@ -424,31 +424,32 @@ describeEmbeddedPostgres("heartbeat dependency-aware queued run selection", () =
       .then((rows) => rows[0] ?? null);
     expect(skippedWake).toMatchObject({ status: "skipped", reason: "issue_tree_hold_active" });
 
-    const rootCommentWake = await heartbeat.wakeup(agentId, {
+    const childCommentWake = await heartbeat.wakeup(agentId, {
       source: "automation",
       triggerDetail: "system",
       reason: "issue_commented",
-      payload: { issueId: rootIssueId, commentId: randomUUID() },
-      contextSnapshot: { issueId: rootIssueId, wakeReason: "issue_commented" },
+      payload: { issueId: childIssueId, commentId: randomUUID() },
+      contextSnapshot: { issueId: childIssueId, wakeReason: "issue_commented" },
     });
 
-    expect(rootCommentWake).not.toBeNull();
-    const rootRun = await db
+    expect(childCommentWake).not.toBeNull();
+    const childRun = await db
       .select({ contextSnapshot: heartbeatRuns.contextSnapshot })
       .from(heartbeatRuns)
-      .where(eq(heartbeatRuns.id, rootCommentWake!.id))
+      .where(eq(heartbeatRuns.id, childCommentWake!.id))
       .then((rows) => rows[0] ?? null);
-    expect(rootRun?.contextSnapshot).toMatchObject({
+    expect(childRun?.contextSnapshot).toMatchObject({
+      treeHoldInteraction: true,
       activeTreeHold: {
         holdId: hold.id,
         rootIssueId,
         mode: "pause",
-        courseCorrectionOnly: true,
+        interaction: true,
       },
     });
   });
 
-  it("suppresses root comment wakes when the active hold is full_pause", async () => {
+  it("allows comment interaction wakes when a legacy hold has a full_pause note", async () => {
     const companyId = randomUUID();
     const agentId = randomUUID();
     const rootIssueId = randomUUID();
@@ -500,15 +501,19 @@ describeEmbeddedPostgres("heartbeat dependency-aware queued run selection", () =
       contextSnapshot: { issueId: rootIssueId, wakeReason: "issue_commented" },
     });
 
-    expect(rootCommentWake).toBeNull();
-    const skippedWake = await db
-      .select({
-        status: agentWakeupRequests.status,
-        reason: agentWakeupRequests.reason,
-      })
-      .from(agentWakeupRequests)
-      .where(sql`${agentWakeupRequests.payload} ->> 'issueId' = ${rootIssueId}`)
+    expect(rootCommentWake).not.toBeNull();
+    const rootRun = await db
+      .select({ contextSnapshot: heartbeatRuns.contextSnapshot })
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.id, rootCommentWake!.id))
       .then((rows) => rows[0] ?? null);
-    expect(skippedWake).toMatchObject({ status: "skipped", reason: "issue_tree_hold_active" });
+    expect(rootRun?.contextSnapshot).toMatchObject({
+      treeHoldInteraction: true,
+      activeTreeHold: {
+        rootIssueId,
+        mode: "pause",
+        interaction: true,
+      },
+    });
   });
 });

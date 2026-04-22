@@ -333,12 +333,13 @@ describeEmbeddedPostgres("issueTreeControlService", () => {
     });
   });
 
-  it("blocks held descendant checkout but allows root comment course-correction checkout", async () => {
+  it("blocks normal checkout but allows comment interaction checkout under a pause hold", async () => {
     const companyId = randomUUID();
     const agentId = randomUUID();
     const rootIssueId = randomUUID();
     const childIssueId = randomUUID();
     const rootRunId = randomUUID();
+    const childRunId = randomUUID();
 
     await db.insert(companies).values({
       id: companyId,
@@ -376,15 +377,26 @@ describeEmbeddedPostgres("issueTreeControlService", () => {
         assigneeAgentId: agentId,
       },
     ]);
-    await db.insert(heartbeatRuns).values({
-      id: rootRunId,
-      companyId,
-      agentId,
-      invocationSource: "automation",
-      triggerDetail: "system",
-      status: "queued",
-      contextSnapshot: { issueId: rootIssueId, wakeReason: "issue_commented" },
-    });
+    await db.insert(heartbeatRuns).values([
+      {
+        id: rootRunId,
+        companyId,
+        agentId,
+        invocationSource: "automation",
+        triggerDetail: "system",
+        status: "queued",
+        contextSnapshot: { issueId: rootIssueId, wakeReason: "issue_commented", commentId: randomUUID() },
+      },
+      {
+        id: childRunId,
+        companyId,
+        agentId,
+        invocationSource: "automation",
+        triggerDetail: "system",
+        status: "queued",
+        contextSnapshot: { issueId: childIssueId, wakeReason: "issue_commented", commentId: randomUUID() },
+      },
+    ]);
 
     const treeSvc = issueTreeControlService(db);
     await treeSvc.createHold(companyId, rootIssueId, {
@@ -401,6 +413,10 @@ describeEmbeddedPostgres("issueTreeControlService", () => {
         mode: "pause",
       }),
     });
+
+    const checkedOutChild = await issueSvc.checkout(childIssueId, agentId, ["todo"], childRunId);
+    expect(checkedOutChild.status).toBe("in_progress");
+    expect(checkedOutChild.checkoutRunId).toBe(childRunId);
 
     const checkedOutRoot = await issueSvc.checkout(rootIssueId, agentId, ["todo"], rootRunId);
     expect(checkedOutRoot.status).toBe("in_progress");
@@ -429,12 +445,8 @@ describeEmbeddedPostgres("issueTreeControlService", () => {
       actor: { actorType: "user", actorId: "board-user", userId: "board-user" },
     });
 
-    await expect(issueSvc.checkout(rootIssueId, agentId, ["todo"], rootRunId)).rejects.toMatchObject({
-      status: 409,
-      details: expect.objectContaining({
-        rootIssueId,
-        mode: "pause",
-      }),
-    });
+    const checkedOutLegacyFullPauseRoot = await issueSvc.checkout(rootIssueId, agentId, ["todo"], rootRunId);
+    expect(checkedOutLegacyFullPauseRoot.status).toBe("in_progress");
+    expect(checkedOutLegacyFullPauseRoot.checkoutRunId).toBe(rootRunId);
   });
 });

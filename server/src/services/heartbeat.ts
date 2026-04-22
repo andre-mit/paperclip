@@ -80,7 +80,7 @@ import {
   sanitizeRuntimeServiceBaseEnv,
 } from "./workspace-runtime.js";
 import { issueService } from "./issues.js";
-import { issueTreeControlService, isCourseCorrectionPauseReleasePolicy } from "./issue-tree-control.js";
+import { issueTreeControlService } from "./issue-tree-control.js";
 import {
   getIssueContinuationSummaryDocument,
   refreshIssueContinuationSummary,
@@ -168,11 +168,6 @@ function resolveCodexTransientFallbackMode(attempt: number): CodexTransientFallb
   return "fresh_session_safer_invocation";
 }
 const RUNNING_ISSUE_WAKE_REASONS_REQUIRING_FOLLOWUP = new Set(["approval_approved"]);
-const TREE_HOLD_COURSE_CORRECTION_WAKE_REASONS = new Set([
-  "issue_commented",
-  "issue_reopened_via_comment",
-  "issue_comment_mentioned",
-]);
 const SESSIONED_LOCAL_ADAPTERS = new Set([
   "claude_local",
   "codex_local",
@@ -1257,17 +1252,17 @@ function shouldRequireIssueCommentForWake(
   );
 }
 
-const BLOCKED_INTERACTION_WAKE_REASONS = new Set([
+const ISSUE_INTERACTION_WAKE_REASONS = new Set([
   "issue_commented",
   "issue_reopened_via_comment",
   "issue_comment_mentioned",
 ]);
 
-function allowsBlockedIssueInteractionWake(
+function allowsIssueInteractionWake(
   contextSnapshot: Record<string, unknown> | null | undefined,
 ) {
   const wakeReason = readNonEmptyString(contextSnapshot?.wakeReason);
-  if (!wakeReason || !BLOCKED_INTERACTION_WAKE_REASONS.has(wakeReason)) return false;
+  if (!wakeReason || !ISSUE_INTERACTION_WAKE_REASONS.has(wakeReason)) return false;
   return Boolean(deriveCommentId(contextSnapshot, null));
 }
 
@@ -1636,6 +1631,8 @@ async function buildPaperclipWakePayload(input: {
       : null,
     checkedOutByHarness: input.contextSnapshot[PAPERCLIP_HARNESS_CHECKOUT_KEY] === true,
     dependencyBlockedInteraction: input.contextSnapshot.dependencyBlockedInteraction === true,
+    treeHoldInteraction: input.contextSnapshot.treeHoldInteraction === true,
+    activeTreeHold: parseObject(input.contextSnapshot.activeTreeHold),
     unresolvedBlockerIssueIds: Array.isArray(input.contextSnapshot.unresolvedBlockerIssueIds)
       ? input.contextSnapshot.unresolvedBlockerIssueIds.filter((value): value is string => typeof value === "string" && value.length > 0)
       : [],
@@ -3507,12 +3504,8 @@ export function heartbeatService(db: Db) {
     const issueId = readNonEmptyString(context.issueId);
     if (issueId) {
       const activePauseHold = await treeControlSvc.getActivePauseHoldGate(run.companyId, issueId);
-      const wakeReason = readNonEmptyString(context.wakeReason) ?? readNonEmptyString(context.reason);
-      const isRootCourseCorrectionWake =
-        activePauseHold?.isRoot === true &&
-        isCourseCorrectionPauseReleasePolicy(activePauseHold.releasePolicy) &&
-        Boolean(wakeReason && TREE_HOLD_COURSE_CORRECTION_WAKE_REASONS.has(wakeReason));
-      if (activePauseHold && !isRootCourseCorrectionWake) {
+      const treeHoldInteractionWake = activePauseHold && allowsIssueInteractionWake(context);
+      if (activePauseHold && !treeHoldInteractionWake) {
         await cancelRunInternal(run.id, "Cancelled because issue is held by an active subtree pause hold");
         await logActivity(db, {
           companyId: run.companyId,
@@ -3536,7 +3529,7 @@ export function heartbeatService(db: Db) {
 
       const dependencyReadiness = await issuesSvc.listDependencyReadiness(run.companyId, [issueId]);
       const unresolvedBlockerCount = dependencyReadiness.get(issueId)?.unresolvedBlockerCount ?? 0;
-      if (unresolvedBlockerCount > 0 && !allowsBlockedIssueInteractionWake(context)) {
+      if (unresolvedBlockerCount > 0 && !allowsIssueInteractionWake(context)) {
         logger.debug({ runId: run.id, issueId, unresolvedBlockerCount }, "claimQueuedRun: skipping blocked run");
         return null;
       }
@@ -6119,12 +6112,8 @@ export function heartbeatService(db: Db) {
         const deferredPayload = parseObject(deferred.payload);
         const deferredContextSeed = parseObject(deferredPayload[DEFERRED_WAKE_CONTEXT_KEY]);
         const activePauseHold = await treeControlSvc.getActivePauseHoldGate(issue.companyId, issue.id);
-        const deferredWakeReason = readNonEmptyString(deferredContextSeed.wakeReason) ?? readNonEmptyString(deferred.reason);
-        const canPromoteRootCourseCorrection =
-          activePauseHold?.isRoot === true &&
-          isCourseCorrectionPauseReleasePolicy(activePauseHold.releasePolicy) &&
-          Boolean(deferredWakeReason && TREE_HOLD_COURSE_CORRECTION_WAKE_REASONS.has(deferredWakeReason));
-        if (activePauseHold && !canPromoteRootCourseCorrection) {
+        const treeHoldInteractionWake = activePauseHold && allowsIssueInteractionWake(deferredContextSeed);
+        if (activePauseHold && !treeHoldInteractionWake) {
           await tx
             .update(agentWakeupRequests)
             .set({
@@ -6139,14 +6128,14 @@ export function heartbeatService(db: Db) {
 
         const promotedContextSeed: Record<string, unknown> = { ...deferredContextSeed };
         if (activePauseHold) {
-          const courseCorrectionOnly = isCourseCorrectionPauseReleasePolicy(activePauseHold.releasePolicy);
+          promotedContextSeed.treeHoldInteraction = true;
           promotedContextSeed.activeTreeHold = {
             holdId: activePauseHold.holdId,
             rootIssueId: activePauseHold.rootIssueId,
             mode: activePauseHold.mode,
             reason: activePauseHold.reason,
             releasePolicy: activePauseHold.releasePolicy,
-            courseCorrectionOnly,
+            interaction: true,
           };
         }
         const deferredCommentIds = extractWakeCommentIds(deferredContextSeed);
@@ -6540,13 +6529,9 @@ export function heartbeatService(db: Db) {
     if (issueId) {
       const activePauseHold = await treeControlSvc.getActivePauseHoldGate(agent.companyId, issueId);
       if (activePauseHold) {
-        const wakeReason = readNonEmptyString(enrichedContextSnapshot.wakeReason) ?? reason;
-        const isRootCourseCorrectionWake =
-          activePauseHold.isRoot &&
-          isCourseCorrectionPauseReleasePolicy(activePauseHold.releasePolicy) &&
-          Boolean(wakeReason && TREE_HOLD_COURSE_CORRECTION_WAKE_REASONS.has(wakeReason));
+        const treeHoldInteractionWake = allowsIssueInteractionWake(enrichedContextSnapshot);
 
-        if (!isRootCourseCorrectionWake) {
+        if (!treeHoldInteractionWake) {
           await writeSkippedRequest("issue_tree_hold_active");
           await logActivity(db, {
             companyId: agent.companyId,
@@ -6569,13 +6554,14 @@ export function heartbeatService(db: Db) {
           return null;
         }
 
+        enrichedContextSnapshot.treeHoldInteraction = true;
         enrichedContextSnapshot.activeTreeHold = {
           holdId: activePauseHold.holdId,
           rootIssueId: activePauseHold.rootIssueId,
           mode: activePauseHold.mode,
           reason: activePauseHold.reason,
           releasePolicy: activePauseHold.releasePolicy,
-          courseCorrectionOnly: isCourseCorrectionPauseReleasePolicy(activePauseHold.releasePolicy),
+          interaction: true,
         };
       }
     }
@@ -6697,7 +6683,7 @@ export function heartbeatService(db: Db) {
         const blockedInteractionWake =
           dependencyReadiness &&
           !dependencyReadiness.isDependencyReady &&
-          allowsBlockedIssueInteractionWake(enrichedContextSnapshot);
+          allowsIssueInteractionWake(enrichedContextSnapshot);
 
         if (blockedInteractionWake) {
           enrichedContextSnapshot.dependencyBlockedInteraction = true;

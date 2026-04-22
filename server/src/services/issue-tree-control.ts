@@ -77,13 +77,6 @@ function normalizeReleasePolicy(
   return releasePolicy ?? DEFAULT_RELEASE_POLICY;
 }
 
-export function isCourseCorrectionPauseReleasePolicy(
-  releasePolicy: IssueTreeHoldReleasePolicy | null | undefined,
-) {
-  const note = typeof releasePolicy?.note === "string" ? releasePolicy.note.trim().toLowerCase() : "";
-  return note !== "full_pause";
-}
-
 function coerceIssueStatus(status: string): IssueStatus {
   return ISSUE_STATUSES.includes(status as IssueStatus) ? (status as IssueStatus) : "backlog";
 }

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import type { Issue, IssueTreeControlPreview, IssueTreeHold } from "@paperclipai/shared";
+import type { Agent, Issue, IssueTreeControlPreview, IssueTreeHold } from "@paperclipai/shared";
 import { act, type ButtonHTMLAttributes, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -273,11 +273,13 @@ vi.mock("@/components/ui/popover", () => ({
 
 vi.mock("@/components/ui/dialog", () => ({
   Dialog: ({ children, open }: { children?: ReactNode; open?: boolean }) => (open ? <div>{children}</div> : null),
-  DialogContent: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
-  DialogDescription: ({ children }: { children?: ReactNode }) => <p>{children}</p>,
-  DialogFooter: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
-  DialogHeader: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
-  DialogTitle: ({ children }: { children?: ReactNode }) => <h2>{children}</h2>,
+  DialogContent: ({ children, className }: { children?: ReactNode; className?: string }) => (
+    <div data-slot="dialog-content" className={className}>{children}</div>
+  ),
+  DialogDescription: ({ children, className }: { children?: ReactNode; className?: string }) => <p className={className}>{children}</p>,
+  DialogFooter: ({ children, className }: { children?: ReactNode; className?: string }) => <div className={className}>{children}</div>,
+  DialogHeader: ({ children, className }: { children?: ReactNode; className?: string }) => <div className={className}>{children}</div>,
+  DialogTitle: ({ children, className }: { children?: ReactNode; className?: string }) => <h2 className={className}>{children}</h2>,
 }));
 
 vi.mock("@/components/ui/sheet", () => ({
@@ -366,6 +368,34 @@ function createIssue(overrides: Partial<Issue> = {}): Issue {
   } as Issue;
 }
 
+function createAgent(overrides: Partial<Agent> = {}): Agent {
+  return {
+    id: "agent-1",
+    companyId: "company-1",
+    name: "CodexCoder",
+    urlKey: "codexcoder",
+    role: "engineer",
+    title: "Software Engineer",
+    icon: "code",
+    status: "active",
+    reportsTo: null,
+    capabilities: null,
+    adapterType: "codex_local",
+    adapterConfig: {},
+    runtimeConfig: {},
+    budgetMonthlyCents: 0,
+    spentMonthlyCents: 0,
+    pauseReason: null,
+    pausedAt: null,
+    permissions: { canCreateAgents: false },
+    lastHeartbeatAt: null,
+    metadata: null,
+    createdAt: new Date("2026-04-21T00:00:00.000Z"),
+    updatedAt: new Date("2026-04-21T00:00:00.000Z"),
+    ...overrides,
+  };
+}
+
 function createPauseHold(overrides: Partial<IssueTreeHold> = {}): IssueTreeHold {
   const now = new Date("2026-04-21T00:00:00.000Z");
   return {
@@ -444,7 +474,7 @@ function createResumePreview(): IssueTreeControlPreview {
       skippedIssues: 0,
       activeRuns: 0,
       queuedRuns: 0,
-      affectedAgents: 0,
+      affectedAgents: 1,
     },
     countsByStatus: { todo: 2 },
     issues: [
@@ -455,7 +485,7 @@ function createResumePreview(): IssueTreeControlPreview {
         status: "todo",
         parentId: null,
         depth: 0,
-        assigneeAgentId: null,
+        assigneeAgentId: "agent-1",
         assigneeUserId: null,
         activeRun: null,
         activeHoldIds: ["hold-1"],
@@ -470,11 +500,66 @@ function createResumePreview(): IssueTreeControlPreview {
         status: "todo",
         parentId: "issue-1",
         depth: 1,
-        assigneeAgentId: null,
+        assigneeAgentId: "agent-1",
         assigneeUserId: null,
         activeRun: null,
         activeHoldIds: ["hold-1"],
         action: "resume",
+        skipped: false,
+        skipReason: null,
+      },
+    ],
+    skippedIssues: [],
+    activeRuns: [],
+    affectedAgents: [{ agentId: "agent-1", issueCount: 2, activeRunCount: 0 }],
+    warnings: [],
+  };
+}
+
+function createPausePreview(): IssueTreeControlPreview {
+  return {
+    companyId: "company-1",
+    rootIssueId: "issue-1",
+    mode: "pause",
+    generatedAt: new Date("2026-04-21T00:00:00.000Z"),
+    releasePolicy: { strategy: "manual" },
+    totals: {
+      totalIssues: 2,
+      affectedIssues: 2,
+      skippedIssues: 0,
+      activeRuns: 1,
+      queuedRuns: 0,
+      affectedAgents: 0,
+    },
+    countsByStatus: { todo: 2 },
+    issues: [
+      {
+        id: "issue-1",
+        identifier: "PAP-1",
+        title: "Issue detail smoke",
+        status: "todo",
+        parentId: null,
+        depth: 0,
+        assigneeAgentId: null,
+        assigneeUserId: null,
+        activeRun: null,
+        activeHoldIds: [],
+        action: "pause",
+        skipped: false,
+        skipReason: null,
+      },
+      {
+        id: "child-1",
+        identifier: "PAP-2",
+        title: "Paused child",
+        status: "in_review",
+        parentId: "issue-1",
+        depth: 1,
+        assigneeAgentId: null,
+        assigneeUserId: null,
+        activeRun: null,
+        activeHoldIds: [],
+        action: "pause",
         skipped: false,
         skipReason: null,
       },
@@ -553,6 +638,46 @@ function createRestorePreview(): IssueTreeControlPreview {
     ],
     activeRuns: [],
     affectedAgents: [{ agentId: "agent-1", issueCount: 1, activeRunCount: 0 }],
+    warnings: [],
+  };
+}
+
+function createCancelPreview(issueCount = 8): IssueTreeControlPreview {
+  const issues = Array.from({ length: issueCount }, (_, index) => ({
+    id: index === 0 ? "issue-1" : `child-${index}`,
+    identifier: index === 0 ? "PAP-1" : `PAP-${index + 1}`,
+    title: index === 0 ? "Issue detail smoke" : `Cancellable child ${index}`,
+    status: "todo" as const,
+    parentId: index === 0 ? null : "issue-1",
+    depth: index === 0 ? 0 : 1,
+    assigneeAgentId: null,
+    assigneeUserId: null,
+    activeRun: null,
+    activeHoldIds: [],
+    action: "cancel" as const,
+    skipped: false,
+    skipReason: null,
+  }));
+
+  return {
+    companyId: "company-1",
+    rootIssueId: "issue-1",
+    mode: "cancel",
+    generatedAt: new Date("2026-04-21T00:00:00.000Z"),
+    releasePolicy: { strategy: "manual" },
+    totals: {
+      totalIssues: issueCount,
+      affectedIssues: issueCount,
+      skippedIssues: 0,
+      activeRuns: 0,
+      queuedRuns: 0,
+      affectedAgents: 0,
+    },
+    countsByStatus: { todo: issueCount },
+    issues,
+    skippedIssues: [],
+    activeRuns: [],
+    affectedAgents: [],
     warnings: [],
   };
 }
@@ -702,6 +827,7 @@ describe("IssueDetail", () => {
     );
     mockIssuesApi.listTreeHolds.mockResolvedValue([activeHold]);
     mockIssuesApi.previewTreeControl.mockResolvedValue(createResumePreview());
+    mockAgentsApi.list.mockResolvedValue([createAgent()]);
     mockIssuesApi.releaseTreeHold.mockImplementation(() => {
       activePauseHoldState = null;
       return Promise.resolve(releasedHold);
@@ -739,6 +865,7 @@ describe("IssueDetail", () => {
       .filter((button) => button.textContent?.trim() === "Resume subtree")
       .at(-1);
     expect(applyResumeButton).toBeTruthy();
+    expect(container.textContent).toContain("CodexCoder");
 
     await act(async () => {
       applyResumeButton!.click();
@@ -748,7 +875,7 @@ describe("IssueDetail", () => {
 
     expect(mockIssuesApi.releaseTreeHold).toHaveBeenCalledWith("PAP-1", "hold-1", {
       reason: null,
-      metadata: { wakeAgents: false },
+      metadata: { wakeAgents: true },
     });
     expect(mockIssuesApi.getTreeControlState.mock.calls.length).toBeGreaterThanOrEqual(2);
     expect(mockPushToast).toHaveBeenCalledWith(expect.objectContaining({
@@ -758,6 +885,88 @@ describe("IssueDetail", () => {
     await waitForAssertion(() => {
       expect(container.textContent).not.toContain("Subtree pause is active.");
       expect(mockIssuesListRender.mock.calls.at(-1)?.[0].issueBadgeById.has("child-1")).toBe(false);
+    });
+  });
+
+  it("uses simplified full-subtree pause controls", async () => {
+    const childIssue = createIssue({
+      id: "child-1",
+      parentId: "issue-1",
+      identifier: "PAP-2",
+      issueNumber: 2,
+      title: "Paused child",
+    });
+    const pausePreview = createPausePreview();
+    const pauseHold = createPauseHold({
+      id: "pause-hold-1",
+      mode: "pause",
+      reason: null,
+      releasePolicy: { strategy: "manual", note: "full_pause" },
+      members: [],
+    });
+
+    mockIssuesApi.get.mockResolvedValue(createIssue());
+    mockIssuesApi.list.mockImplementation((_companyId, filters?: { parentId?: string }) =>
+      Promise.resolve(filters?.parentId === "issue-1" ? [childIssue] : []),
+    );
+    mockIssuesApi.previewTreeControl.mockResolvedValue(pausePreview);
+    mockIssuesApi.createTreeHold.mockResolvedValue({ hold: pauseHold, preview: pausePreview });
+    mockAuthApi.getSession.mockResolvedValue({
+      session: { userId: "user-1" },
+      user: { id: "user-1" },
+    });
+
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <IssueDetail />
+        </QueryClientProvider>,
+      );
+    });
+    await flushReact();
+    await flushReact();
+
+    const moreButton = container.querySelector('button[aria-label="More issue actions"]') as HTMLButtonElement | null;
+    expect(moreButton).toBeTruthy();
+
+    await act(async () => {
+      moreButton!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    });
+    await flushReact();
+
+    const pauseMenuButton = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent?.trim() === "Pause subtree...");
+    expect(pauseMenuButton).toBeTruthy();
+
+    await act(async () => {
+      pauseMenuButton!.click();
+    });
+    await flushReact();
+    await flushReact();
+
+    expect(mockIssuesApi.previewTreeControl).toHaveBeenCalledWith("PAP-1", {
+      mode: "pause",
+      releasePolicy: { strategy: "manual" },
+    });
+    expect(container.textContent).not.toContain("Pause mode");
+    expect(container.textContent).not.toContain("Release policy");
+    expect(container.textContent).not.toContain("Status breakdown");
+    expect(container.textContent).not.toContain("Active runs cancelled");
+    expect(container.textContent).toContain("Paused child");
+
+    const pauseApplyButton = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent?.trim() === "Pause and stop work");
+    expect(pauseApplyButton).toBeTruthy();
+
+    await act(async () => {
+      pauseApplyButton!.click();
+    });
+    await flushReact();
+
+    expect(mockIssuesApi.createTreeHold).toHaveBeenCalledWith("PAP-1", {
+      mode: "pause",
+      reason: null,
+      releasePolicy: { strategy: "manual", note: "full_pause" },
     });
   });
 
@@ -835,7 +1044,7 @@ describe("IssueDetail", () => {
       releasePolicy: { strategy: "manual" },
     });
     expect(container.textContent).toContain("Restore issues cancelled by this subtree operation so work can resume.");
-    expect(container.textContent).toContain("Issues restored: 1");
+    expect(container.textContent).toContain("Cancelled child");
 
     const restoreApplyButton = Array.from(container.querySelectorAll("button"))
       .find((button) => button.textContent?.trim() === "Restore 1 issues");
@@ -852,5 +1061,73 @@ describe("IssueDetail", () => {
       releasePolicy: { strategy: "manual" },
       metadata: { wakeAgents: false },
     });
+  });
+
+  it("bounds the subtree control dialog with an internal scroll body", async () => {
+    const childIssue = createIssue({
+      id: "child-1",
+      parentId: "issue-1",
+      identifier: "PAP-2",
+      issueNumber: 2,
+      title: "Cancellable child",
+    });
+
+    mockIssuesApi.get.mockResolvedValue(createIssue());
+    mockIssuesApi.list.mockImplementation((_companyId, filters?: { parentId?: string }) =>
+      Promise.resolve(filters?.parentId === "issue-1" ? [childIssue] : []),
+    );
+    mockIssuesApi.previewTreeControl.mockResolvedValue(createCancelPreview(24));
+    mockAuthApi.getSession.mockResolvedValue({
+      session: { userId: "user-1" },
+      user: { id: "user-1" },
+    });
+
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <IssueDetail />
+        </QueryClientProvider>,
+      );
+    });
+    await flushReact();
+    await flushReact();
+
+    const cancelMenuButton = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent?.trim() === "Cancel subtree...");
+    expect(cancelMenuButton).toBeTruthy();
+
+    await act(async () => {
+      cancelMenuButton!.click();
+    });
+    await flushReact();
+    await flushReact();
+
+    expect(mockIssuesApi.previewTreeControl).toHaveBeenCalledWith("PAP-1", {
+      mode: "cancel",
+      releasePolicy: { strategy: "manual" },
+    });
+
+    const dialogContent = container.querySelector('[data-slot="dialog-content"]') as HTMLDivElement | null;
+    expect(dialogContent).toBeTruthy();
+    expect(dialogContent!.className).toContain("max-h-[calc(100dvh-2rem)]");
+    expect(dialogContent!.className).toContain("overflow-hidden");
+    expect(dialogContent!.className).toContain("flex-col");
+
+    const bodyScrollRegion = Array.from(dialogContent!.querySelectorAll("div"))
+      .find((element) =>
+        typeof element.className === "string"
+        && element.className.includes("overflow-y-auto")
+        && element.textContent?.includes("Reason (required)"),
+      );
+    expect(bodyScrollRegion?.className).toContain("min-h-0");
+    expect(bodyScrollRegion?.className).toContain("overscroll-contain");
+
+    const footer = Array.from(dialogContent!.querySelectorAll("div"))
+      .find((element) =>
+        typeof element.className === "string"
+        && element.className.includes("border-t")
+        && element.textContent?.includes("Close"),
+      );
+    expect(footer?.className).toContain("bg-background");
   });
 });

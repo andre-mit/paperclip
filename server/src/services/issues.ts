@@ -38,7 +38,6 @@ import { resolveIssueGoalId, resolveNextIssueGoalId } from "./issue-goal-fallbac
 import { getDefaultCompanyGoal } from "./goals.js";
 import {
   issueTreeControlService,
-  isCourseCorrectionPauseReleasePolicy,
   type ActiveIssueTreePauseHoldGate,
 } from "./issue-tree-control.js";
 
@@ -50,7 +49,7 @@ const ISSUE_LIST_RELATED_QUERY_CHUNK_SIZE = 500;
 export const MAX_CHILD_ISSUES_CREATED_BY_HELPER = 25;
 const MAX_CHILD_COMPLETION_SUMMARIES = 20;
 const CHILD_COMPLETION_SUMMARY_BODY_MAX_CHARS = 500;
-const TREE_HOLD_COURSE_CORRECTION_WAKE_REASONS = new Set([
+const ISSUE_INTERACTION_WAKE_REASONS = new Set([
   "issue_commented",
   "issue_reopened_via_comment",
   "issue_comment_mentioned",
@@ -85,6 +84,18 @@ function readStringFromRecord(record: unknown, key: string) {
   if (!record || typeof record !== "object") return null;
   const value = (record as Record<string, unknown>)[key];
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function readLatestWakeCommentId(record: unknown) {
+  if (!record || typeof record !== "object") return null;
+  const value = (record as Record<string, unknown>).wakeCommentIds;
+  if (Array.isArray(value)) {
+    const latest = value
+      .filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
+      .at(-1);
+    if (latest) return latest.trim();
+  }
+  return readStringFromRecord(record, "wakeCommentId") ?? readStringFromRecord(record, "commentId");
 }
 
 export interface IssueFilters {
@@ -941,12 +952,12 @@ export function issueService(db: Db) {
     }
   }
 
-  async function isRootCourseCorrectionCheckoutAllowed(
+  async function isTreeHoldInteractionCheckoutAllowed(
     companyId: string,
     checkoutRunId: string | null,
-    gate: ActiveIssueTreePauseHoldGate,
+    _gate: ActiveIssueTreePauseHoldGate,
   ) {
-    if (!gate.isRoot || !checkoutRunId || !isCourseCorrectionPauseReleasePolicy(gate.releasePolicy)) return false;
+    if (!checkoutRunId) return false;
     const run = await db
       .select({ contextSnapshot: heartbeatRuns.contextSnapshot })
       .from(heartbeatRuns)
@@ -955,7 +966,11 @@ export function issueService(db: Db) {
     const wakeReason =
       readStringFromRecord(run?.contextSnapshot, "wakeReason") ??
       readStringFromRecord(run?.contextSnapshot, "reason");
-    return Boolean(wakeReason && TREE_HOLD_COURSE_CORRECTION_WAKE_REASONS.has(wakeReason));
+    return Boolean(
+      wakeReason &&
+      ISSUE_INTERACTION_WAKE_REASONS.has(wakeReason) &&
+      readLatestWakeCommentId(run?.contextSnapshot),
+    );
   }
 
   async function assertAssignableUser(companyId: string, userId: string) {
@@ -2228,7 +2243,7 @@ export function issueService(db: Db) {
       const activePauseHold = await treeControlSvc.getActivePauseHoldGate(issueCompany.companyId, id);
       if (
         activePauseHold &&
-        !(await isRootCourseCorrectionCheckoutAllowed(issueCompany.companyId, checkoutRunId, activePauseHold))
+        !(await isTreeHoldInteractionCheckoutAllowed(issueCompany.companyId, checkoutRunId, activePauseHold))
       ) {
         throw conflict("Issue checkout blocked by active subtree pause hold", {
           issueId: id,

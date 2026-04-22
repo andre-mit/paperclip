@@ -65,6 +65,7 @@ import { IssueChatThread, type IssueChatComposerHandle } from "../components/Iss
 import { IssueContinuationHandoff } from "../components/IssueContinuationHandoff";
 import { IssueDocumentsSection } from "../components/IssueDocumentsSection";
 import { IssuesList } from "../components/IssuesList";
+import { AgentIcon } from "../components/AgentIconPicker";
 import { IssueReferenceActivitySummary } from "../components/IssueReferenceActivitySummary";
 import { IssueRelatedWorkPanel } from "../components/IssueRelatedWorkPanel";
 import { IssueProperties } from "../components/IssueProperties";
@@ -157,33 +158,11 @@ const TREE_CONTROL_MODE_LABEL: Record<IssueTreeControlMode, string> = {
   restore: "Restore subtree",
 };
 const TREE_CONTROL_MODE_HELP_TEXT: Record<IssueTreeControlMode, string> = {
-  pause: "Pause active execution in this issue subtree and hold descendant execution until release.",
+  pause: "Pause active execution in this issue subtree until an explicit resume.",
   resume: "Release the active subtree pause hold so held work can continue.",
   cancel: "Cancel non-terminal issues in this subtree and stop queued/running work where possible.",
   restore: "Restore issues cancelled by this subtree operation so work can resume.",
 };
-const TREE_CONTROL_STRATEGY_OPTIONS = [
-  { value: "manual", label: "Manual release" },
-  { value: "after_active_runs_finish", label: "Release after active runs finish" },
-] as const;
-const TREE_CONTROL_PAUSE_VARIANTS = [
-  {
-    value: "course_correction",
-    label: "Course-correction pause",
-    description: "Hold descendants while the root can still run for planner follow-up.",
-  },
-  {
-    value: "full_pause",
-    label: "Full subtree pause",
-    description: "Stop root and descendant execution until an explicit resume action.",
-  },
-] as const;
-type TreeControlPauseVariant = (typeof TREE_CONTROL_PAUSE_VARIANTS)[number]["value"];
-
-function parsePauseVariantFromNote(note: string | null | undefined): TreeControlPauseVariant {
-  const normalized = note?.trim().toLowerCase();
-  return normalized === "course_correction" ? "course_correction" : "full_pause";
-}
 
 function treeControlPreviewErrorCopy(error: unknown): string {
   if (error instanceof ApiError) {
@@ -1048,12 +1027,8 @@ export function IssueDetail() {
   const [treeControlOpen, setTreeControlOpen] = useState(false);
   const [treeControlMode, setTreeControlMode] = useState<IssueTreeControlMode>("pause");
   const [treeControlReason, setTreeControlReason] = useState("");
-  const [treeControlPauseVariant, setTreeControlPauseVariant] = useState<TreeControlPauseVariant>("course_correction");
   const [treeControlWakeAgentsOnResume, setTreeControlWakeAgentsOnResume] = useState(false);
   const [treeControlCancelConfirmed, setTreeControlCancelConfirmed] = useState(false);
-  const [treeControlReleaseStrategy, setTreeControlReleaseStrategy] = useState<"manual" | "after_active_runs_finish">(
-    "manual",
-  );
   const [optimisticComments, setOptimisticComments] = useState<OptimisticIssueComment[]>([]);
   const [locallyQueuedCommentRunIds, setLocallyQueuedCommentRunIds] = useState<Map<string, string>>(() => new Map());
   const [pendingCommentComposerFocusKey, setPendingCommentComposerFocusKey] = useState(0);
@@ -1247,14 +1222,12 @@ export function IssueDetail() {
       "tree-control-preview",
       issueId ?? "pending",
       treeControlMode,
-      treeControlReleaseStrategy,
-      treeControlPauseVariant,
     ],
     queryFn: () =>
       issuesApi.previewTreeControl(issueId!, {
         mode: treeControlMode,
         releasePolicy: {
-          strategy: treeControlReleaseStrategy,
+          strategy: "manual",
         },
       }),
     enabled: treeControlOpen && !!issueId && canManageTreeControl,
@@ -1543,10 +1516,8 @@ export function IssueDetail() {
         mode: treeControlMode,
         reason: treeControlReason.trim() || null,
         releasePolicy: {
-          strategy: treeControlReleaseStrategy,
-          ...(treeControlMode === "pause"
-            ? { note: treeControlPauseVariant }
-            : {}),
+          strategy: "manual",
+          ...(treeControlMode === "pause" ? { note: "full_pause" } : {}),
         },
         ...(treeControlMode === "restore"
           ? { metadata: { wakeAgents: treeControlWakeAgentsOnResume } }
@@ -1557,7 +1528,6 @@ export function IssueDetail() {
     onSuccess: async (result) => {
       const modeLabel = TREE_CONTROL_MODE_LABEL[result.hold.mode];
       const cancelCount = result.preview?.totals.activeRuns ?? 0;
-      const pauseModeText = treeControlPauseVariant === "course_correction" ? "Course-correction pause enabled." : "Full subtree pause enabled.";
       pushToast({
         title: result.kind === "release"
           ? "Subtree resumed"
@@ -1567,10 +1537,10 @@ export function IssueDetail() {
         body: result.kind === "release"
           ? (result.hold.releaseReason?.trim() || "Active subtree pause released.")
           : result.hold.mode === "pause"
-            ? `${pauseModeText} ${cancelCount} run${cancelCount === 1 ? "" : "s"} cancelled.`
+            ? `Subtree paused. ${cancelCount} run${cancelCount === 1 ? "" : "s"} cancelled.`
             : result.hold.reason?.trim()
               ? result.hold.reason
-              : `Control applied with ${result.hold.releasePolicy?.strategy ?? "manual"} release policy.`,
+              : "Subtree control applied.",
       });
       setTreeControlOpen(false);
       setTreeControlReason("");
@@ -2671,26 +2641,13 @@ export function IssueDetail() {
 
   const hasAttachments = attachmentList.length > 0;
   const treePreviewWarnings = treeControlPreview?.warnings ?? [];
-  const activePauseVariant = parsePauseVariantFromNote(
-    activeRootPauseHold?.releasePolicy?.note ?? activePauseHold?.releasePolicy?.note,
-  );
   const heldDescendantCount = activeRootPauseHold?.members?.filter((member) => member.depth > 0 && !member.skipped).length
     ?? Math.max(heldIssueIds.size - 1, 0);
   const canShowSubtreeControls = canManageTreeControl && childIssues.length > 0;
   const canResumeSubtree = canShowSubtreeControls && activePauseHold?.isRoot === true;
   const canRestoreSubtree = canShowSubtreeControls && activeCancelHolds.length > 0;
-  const previewTerminalSkippedCount = treeControlPreview?.skippedIssues.filter((candidate) => candidate.skipReason === "terminal_status").length ?? 0;
   const previewAffectedIssueCount = treePreviewAffectedIssues.length;
-  const previewAffectedDescendantCount = treePreviewAffectedIssues.filter((candidate) => candidate.depth > 0).length;
   const previewAffectedAgentCount = treeControlPreview?.totals.affectedAgents ?? 0;
-  const treePreviewPrimaryCountLabel =
-    treeControlMode === "pause"
-      ? "Issues held"
-      : treeControlMode === "cancel"
-        ? "Issues cancelled"
-        : treeControlMode === "restore"
-          ? "Issues restored"
-          : "Issues released";
   const treeControlPrimaryButtonLabel =
     treeControlMode === "pause"
       ? "Pause and stop work"
@@ -2699,27 +2656,39 @@ export function IssueDetail() {
       : treeControlMode === "restore"
           ? `Restore ${previewAffectedIssueCount} issues`
           : "Resume subtree";
-  const deferredComposerHint = activePauseHold && !activePauseHold.isRoot
-    ? "Will be delivered when the subtree resumes."
-    : null;
-  const rootCourseCorrectionComposerHint = activePauseHold?.isRoot && activePauseVariant === "course_correction"
+  const treePreviewAffectedIssueRows = treePreviewAffectedIssues.map((candidate) => ({
+    candidate,
+    issue: {
+      ...issue,
+      id: candidate.id,
+      identifier: candidate.identifier,
+      title: candidate.title,
+      status: candidate.status,
+      parentId: candidate.parentId,
+      assigneeAgentId: candidate.assigneeAgentId,
+      assigneeUserId: candidate.assigneeUserId,
+      executionRunId: candidate.activeRun?.id ?? null,
+    } satisfies Issue,
+  }));
+  const treePreviewAffectedAgentRows = (treeControlPreview?.affectedAgents ?? [])
+    .map((previewAgent) => ({
+      ...previewAgent,
+      agent: agentMap.get(previewAgent.agentId) ?? null,
+    }))
+    .sort((a, b) => (a.agent?.name ?? a.agentId).localeCompare(b.agent?.name ?? b.agentId));
+  const pausedComposerHint = activePauseHold
     ? (
       issue.assigneeAgentId
-        ? `Sending this comment will wake ${agentMap.get(issue.assigneeAgentId)?.name ?? "the assignee"} in course-correction mode. Descendants stay held.`
-        : "Assign a planner above to run course corrections."
+        ? `Sending this comment will wake ${agentMap.get(issue.assigneeAgentId)?.name ?? "the assignee"} for triage while the subtree remains paused.`
+        : "Assign an agent to wake them for triage while the subtree remains paused."
     )
     : null;
-  const composerHint = rootCourseCorrectionComposerHint ?? deferredComposerHint;
-  const queuedCommentReason: "hold" | "active_run" | "other" =
-    activePauseHold && (!activePauseHold.isRoot || activePauseVariant === "full_pause")
-      ? "hold"
-      : "active_run";
+  const composerHint = pausedComposerHint;
+  const queuedCommentReason: "hold" | "active_run" | "other" = "active_run";
   const canApplyTreeControl =
     Boolean(treeControlPreview)
     && !treeControlPreviewLoading
-    && (treeControlMode !== "cancel" || (treeControlReason.trim().length > 0 && treeControlCancelConfirmed))
-    && (treeControlMode !== "resume" || !treeControlWakeAgentsOnResume || previewAffectedAgentCount > 0)
-    && (treeControlMode !== "restore" || !treeControlWakeAgentsOnResume || previewAffectedAgentCount > 0);
+    && (treeControlMode !== "cancel" || (treeControlReason.trim().length > 0 && treeControlCancelConfirmed));
   const attachmentUploadButton = (
     <>
       <input
@@ -2792,9 +2761,7 @@ export function IssueDetail() {
               <div className="flex flex-wrap items-center gap-2">
                 <span className="font-medium">Subtree pause is active.</span>
                 <span className="text-xs text-amber-900/80 dark:text-amber-100/80">
-                  {activePauseVariant === "course_correction"
-                    ? "Course-correction mode keeps descendants held while root planning can continue."
-                    : "Full pause mode holds the full subtree until resume."}
+                  Root and descendant execution is held until resume. Human comments can still wake assignees for triage.
                 </span>
               </div>
               <div className="text-xs text-amber-900/80 dark:text-amber-100/80">
@@ -2807,7 +2774,7 @@ export function IssueDetail() {
                     size="sm"
                     onClick={() => {
                       setTreeControlMode("resume");
-                      setTreeControlWakeAgentsOnResume(false);
+                      setTreeControlWakeAgentsOnResume(true);
                       setTreeControlOpen(true);
                     }}
                   >
@@ -2818,6 +2785,7 @@ export function IssueDetail() {
                     size="sm"
                     onClick={() => {
                       setTreeControlMode("resume");
+                      setTreeControlWakeAgentsOnResume(true);
                       setTreeControlOpen(true);
                     }}
                   >
@@ -3017,7 +2985,7 @@ export function IssueDetail() {
                       className="flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded hover:bg-accent/50"
                       onClick={() => {
                         setTreeControlMode("resume");
-                        setTreeControlWakeAgentsOnResume(false);
+                        setTreeControlWakeAgentsOnResume(true);
                         setTreeControlOpen(true);
                         setMoreOpen(false);
                       }}
@@ -3448,43 +3416,17 @@ export function IssueDetail() {
       </Tabs>
 
       <Dialog open={treeControlOpen} onOpenChange={setTreeControlOpen}>
-        <DialogContent className="sm:max-w-[560px]">
-          <DialogHeader>
+        <DialogContent className="flex max-h-[calc(100dvh-2rem)] flex-col gap-0 overflow-hidden p-0 sm:max-w-[560px]">
+          <DialogHeader className="border-b border-border/60 px-6 pb-4 pr-12 pt-6">
             <DialogTitle>{TREE_CONTROL_MODE_LABEL[treeControlMode]}</DialogTitle>
             <DialogDescription>
               {TREE_CONTROL_MODE_HELP_TEXT[treeControlMode]}
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4">
+          <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-6 py-4">
             {treeControlMode === "cancel" ? (
               <div className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive">
                 Cancelling a subtree is destructive. Non-terminal issues will be marked cancelled, and running or queued work will be interrupted where possible.
-              </div>
-            ) : null}
-
-            {treeControlMode === "pause" ? (
-              <div className="space-y-2">
-                <p className="text-xs font-medium text-muted-foreground">Pause mode</p>
-                {TREE_CONTROL_PAUSE_VARIANTS.map((variant) => (
-                  <label
-                    key={variant.value}
-                    className={cn(
-                      "flex cursor-pointer items-start gap-2 rounded-md border p-2 text-sm",
-                      treeControlPauseVariant === variant.value ? "border-primary bg-primary/5" : "border-border",
-                    )}
-                  >
-                    <input
-                      type="radio"
-                      className="mt-0.5"
-                      checked={treeControlPauseVariant === variant.value}
-                      onChange={() => setTreeControlPauseVariant(variant.value)}
-                    />
-                    <span>
-                      <span className="block font-medium">{variant.label}</span>
-                      <span className="text-xs text-muted-foreground">{variant.description}</span>
-                    </span>
-                  </label>
-                ))}
               </div>
             ) : null}
 
@@ -3501,41 +3443,36 @@ export function IssueDetail() {
             </div>
 
             {(treeControlMode === "resume" || treeControlMode === "restore") ? (
-              <label className="flex items-start gap-2 rounded-md border border-border bg-muted/20 p-2 text-sm">
-                <input
-                  type="checkbox"
-                  className="mt-0.5"
-                  disabled={previewAffectedAgentCount === 0}
-                  checked={treeControlWakeAgentsOnResume}
-                  onChange={(event) => setTreeControlWakeAgentsOnResume(event.target.checked)}
-                />
-                <span>
-                  <span className="block font-medium">Wake affected agents ({previewAffectedAgentCount})</span>
-                  <span className="text-xs text-muted-foreground">
-                    {previewAffectedAgentCount === 0
-                      ? "No assigned agents are eligible to wake from this preview."
-                      : treeControlMode === "restore"
-                        ? "Unchecked by default. Restore does not wake agents unless explicitly enabled."
-                        : "Unchecked by default. Resume does not wake agents unless explicitly enabled."}
+              <div className="space-y-2">
+                <label className="flex items-start gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5"
+                    disabled={previewAffectedAgentCount === 0}
+                    checked={treeControlWakeAgentsOnResume}
+                    onChange={(event) => setTreeControlWakeAgentsOnResume(event.target.checked)}
+                  />
+                  <span>
+                    <span className="block font-medium">Wake affected agents ({previewAffectedAgentCount})</span>
+                    <span className="text-xs text-muted-foreground">
+                      {previewAffectedAgentCount === 0
+                        ? "No assigned agents are eligible to wake from this preview."
+                        : "Wake assigned agents after this operation completes."}
+                    </span>
                   </span>
-                </span>
-              </label>
-            ) : null}
-
-            {(treeControlMode === "pause" || treeControlMode === "resume") ? (
-              <div className="space-y-1.5">
-                <label className="text-xs text-muted-foreground">Release policy</label>
-                <select
-                  value={treeControlReleaseStrategy}
-                  onChange={(event) => setTreeControlReleaseStrategy(event.target.value as "manual" | "after_active_runs_finish")}
-                  className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
-                >
-                  {TREE_CONTROL_STRATEGY_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
+                </label>
+                {treeControlWakeAgentsOnResume && treePreviewAffectedAgentRows.length > 0 ? (
+                  <div className="max-h-32 space-y-1 overflow-y-auto overscroll-contain">
+                    {treePreviewAffectedAgentRows.map(({ agentId, agent }) => (
+                      <div key={agentId} className="flex items-center gap-2 rounded-sm px-1 py-1 text-sm hover:bg-accent/50">
+                        <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-border bg-background">
+                          <AgentIcon icon={agent?.icon} className="h-3.5 w-3.5 text-muted-foreground" />
+                        </span>
+                        <span className="min-w-0 flex-1 truncate">{agent?.name ?? agentId.slice(0, 8)}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
               </div>
             ) : null}
 
@@ -3551,7 +3488,7 @@ export function IssueDetail() {
               </label>
             ) : null}
 
-            <div className="rounded-md border border-border bg-muted/20 p-3">
+            <div className="space-y-2">
               {treeControlPreviewLoading ? (
                 <div className="space-y-2">
                   <Skeleton className="h-4 w-40" />
@@ -3573,17 +3510,7 @@ export function IssueDetail() {
                   </Button>
                 </div>
               ) : treeControlPreview ? (
-                <div className="mt-2 space-y-2">
-                  <div className="grid grid-cols-1 gap-1 text-xs text-muted-foreground sm:grid-cols-2">
-                    <span>{treePreviewPrimaryCountLabel}: {previewAffectedIssueCount}</span>
-                    <span>Descendants affected: {previewAffectedDescendantCount}</span>
-                    <span>Active runs cancelled: {treeControlPreview.totals.activeRuns}</span>
-                    <span>Queued runs dropped: {treeControlPreview.totals.queuedRuns}</span>
-                    <span>Agents affected: {treeControlPreview.totals.affectedAgents}</span>
-                    {previewTerminalSkippedCount > 0 ? (
-                      <span>Terminal issues skipped: {previewTerminalSkippedCount}</span>
-                    ) : null}
-                  </div>
+                <div className="space-y-2">
                   {treePreviewWarnings.length > 0 ? (
                     <div className="space-y-1">
                       {treePreviewWarnings.map((warning) => (
@@ -3593,38 +3520,21 @@ export function IssueDetail() {
                       ))}
                     </div>
                   ) : null}
-                  {treeControlPreview.countsByStatus ? (
-                    <details className="rounded border border-border/60 bg-background p-2 text-xs text-muted-foreground">
-                      <summary className="cursor-pointer font-medium text-foreground">Status breakdown</summary>
-                      <div className="mt-2 grid grid-cols-2 gap-1">
-                        {Object.entries(treeControlPreview.countsByStatus).map(([status, count]) => (
-                          <span key={status}>{status.replaceAll("_", " ")}: {count ?? 0}</span>
-                        ))}
-                      </div>
-                    </details>
-                  ) : null}
-                  {treeControlPreview.affectedAgents.length > 0 ? (
-                    <details className="rounded border border-border/60 bg-background p-2 text-xs text-muted-foreground">
-                      <summary className="cursor-pointer font-medium text-foreground">Affected agents ({treeControlPreview.affectedAgents.length})</summary>
-                      <div className="mt-2 space-y-1">
-                        {treeControlPreview.affectedAgents.map((agent) => (
-                          <div key={agent.agentId} className="flex items-center justify-between gap-2">
-                            <span>{agentMap.get(agent.agentId)?.name ?? agent.agentId.slice(0, 8)}</span>
-                            <span>{agent.issueCount} issues · {agent.activeRunCount} active runs</span>
-                          </div>
-                        ))}
-                      </div>
-                    </details>
-                  ) : null}
-                  {treePreviewAffectedIssues.length > 0 ? (
-                    <div className="max-h-40 space-y-1 overflow-y-auto rounded border border-border/70 bg-background p-2">
-                      {treePreviewAffectedIssues.slice(0, 20).map((candidate) => (
-                        <div key={candidate.id} className="flex items-center justify-between gap-2 text-xs">
-                          <span className="truncate">
-                            {candidate.identifier ? `${candidate.identifier} ` : ""}
-                            {candidate.title}
-                          </span>
-                          <span className="text-muted-foreground">{candidate.status}</span>
+                  {treePreviewAffectedIssueRows.length > 0 ? (
+                    <div className="max-h-56 overflow-y-auto overscroll-contain">
+                      {treePreviewAffectedIssueRows.map(({ candidate, issue: previewIssue }) => (
+                        <div key={candidate.id} style={candidate.depth > 0 ? { paddingLeft: `${Math.min(candidate.depth, 6) * 14}px` } : undefined}>
+                          <Link
+                            to={createIssueDetailPath(candidate.identifier ?? candidate.id)}
+                            issuePrefetch={previewIssue}
+                            className="group flex items-start gap-2 border-b border-border py-2 pl-1 pr-2 text-sm no-underline text-inherit transition-colors last:border-b-0 hover:bg-accent/50 sm:items-center"
+                          >
+                            <StatusIcon status={candidate.status} />
+                            <span className="shrink-0 font-mono text-xs text-muted-foreground">
+                              {candidate.identifier ?? candidate.id.slice(0, 8)}
+                            </span>
+                            <span className="min-w-0 flex-1 truncate">{candidate.title}</span>
+                          </Link>
                         </div>
                       ))}
                     </div>
@@ -3635,7 +3545,7 @@ export function IssueDetail() {
               )}
             </div>
           </div>
-          <DialogFooter>
+          <DialogFooter className="border-t border-border/60 bg-background px-6 py-4">
             <Button variant="outline" onClick={() => setTreeControlOpen(false)} disabled={executeTreeControl.isPending}>
               Close
             </Button>
