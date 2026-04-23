@@ -182,6 +182,15 @@ function resolveCodexTransientFallbackMode(attempt: number): CodexTransientFallb
 
 function readCodexTransientRetryNotBefore(run: Pick<typeof heartbeatRuns.$inferSelect, "errorCode" | "resultJson">) {
   if (run.errorCode !== "codex_transient_upstream") return null;
+  return readTransientRetryNotBeforeFromRun(run);
+}
+
+function readClaudeTransientRetryNotBefore(run: Pick<typeof heartbeatRuns.$inferSelect, "errorCode" | "resultJson">) {
+  if (run.errorCode !== "claude_transient_upstream") return null;
+  return readTransientRetryNotBeforeFromRun(run);
+}
+
+function readTransientRetryNotBeforeFromRun(run: Pick<typeof heartbeatRuns.$inferSelect, "resultJson">) {
   const resultJson = parseObject(run.resultJson);
   const value = resultJson.transientRetryNotBefore;
   if (!(typeof value === "string" || typeof value === "number" || value instanceof Date)) {
@@ -3287,6 +3296,11 @@ export function heartbeatService(db: Db) {
       agent.adapterType === "codex_local" && retryReason === BOUNDED_TRANSIENT_HEARTBEAT_RETRY_REASON
         ? readCodexTransientRetryNotBefore(run)
         : null;
+    const claudeTransientRetryNotBefore =
+      agent.adapterType === "claude_local" && retryReason === BOUNDED_TRANSIENT_HEARTBEAT_RETRY_REASON
+        ? readClaudeTransientRetryNotBefore(run)
+        : null;
+    const transientRetryNotBefore = codexTransientRetryNotBefore ?? claudeTransientRetryNotBefore;
 
     if (!baseSchedule) {
       await appendRunEvent(run, await nextRunEventSeq(run.id), {
@@ -3307,11 +3321,11 @@ export function heartbeatService(db: Db) {
       };
     }
     const schedule =
-      codexTransientRetryNotBefore && codexTransientRetryNotBefore.getTime() > baseSchedule.dueAt.getTime()
+      transientRetryNotBefore && transientRetryNotBefore.getTime() > baseSchedule.dueAt.getTime()
         ? {
             ...baseSchedule,
-            dueAt: codexTransientRetryNotBefore,
-            delayMs: Math.max(0, codexTransientRetryNotBefore.getTime() - now.getTime()),
+            dueAt: transientRetryNotBefore,
+            delayMs: Math.max(0, transientRetryNotBefore.getTime() - now.getTime()),
           }
         : baseSchedule;
 
@@ -3326,7 +3340,7 @@ export function heartbeatService(db: Db) {
       retryReason,
       scheduledRetryAttempt: schedule.attempt,
       scheduledRetryAt: schedule.dueAt.toISOString(),
-      ...(codexTransientRetryNotBefore ? { transientRetryNotBefore: codexTransientRetryNotBefore.toISOString() } : {}),
+      ...(transientRetryNotBefore ? { transientRetryNotBefore: transientRetryNotBefore.toISOString() } : {}),
       ...(codexTransientFallbackMode ? { codexTransientFallbackMode } : {}),
     };
 
@@ -3345,7 +3359,7 @@ export function heartbeatService(db: Db) {
             retryReason,
             scheduledRetryAttempt: schedule.attempt,
             scheduledRetryAt: schedule.dueAt.toISOString(),
-            ...(codexTransientRetryNotBefore ? { transientRetryNotBefore: codexTransientRetryNotBefore.toISOString() } : {}),
+            ...(transientRetryNotBefore ? { transientRetryNotBefore: transientRetryNotBefore.toISOString() } : {}),
             ...(codexTransientFallbackMode ? { codexTransientFallbackMode } : {}),
           },
           status: "queued",
@@ -3412,7 +3426,7 @@ export function heartbeatService(db: Db) {
         scheduledRetryAt: schedule.dueAt.toISOString(),
         baseDelayMs: schedule.baseDelayMs,
         delayMs: schedule.delayMs,
-        ...(codexTransientRetryNotBefore ? { transientRetryNotBefore: codexTransientRetryNotBefore.toISOString() } : {}),
+        ...(transientRetryNotBefore ? { transientRetryNotBefore: transientRetryNotBefore.toISOString() } : {}),
         ...(codexTransientFallbackMode ? { codexTransientFallbackMode } : {}),
       },
     });
@@ -5959,7 +5973,11 @@ export function heartbeatService(db: Db) {
             );
           }
         }
-        if (outcome === "failed" && livenessRun.errorCode === "codex_transient_upstream") {
+        if (
+          outcome === "failed" &&
+          (livenessRun.errorCode === "codex_transient_upstream" ||
+            livenessRun.errorCode === "claude_transient_upstream")
+        ) {
           await scheduleBoundedRetryForRun(livenessRun, agent);
         }
         await finalizeIssueCommentPolicy(livenessRun, agent);

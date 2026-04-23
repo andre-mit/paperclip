@@ -58,7 +58,11 @@ describeEmbeddedPostgres("heartbeat bounded retry scheduling", () => {
     errorCode: string;
     scheduledRetryAttempt?: number;
     resultJson?: Record<string, unknown> | null;
+    adapterType?: "codex_local" | "claude_local";
+    agentName?: string;
   }) {
+    const adapterType = input.adapterType ?? "codex_local";
+    const agentName = input.agentName ?? (adapterType === "claude_local" ? "ClaudeCoder" : "CodexCoder");
     await db.insert(companies).values({
       id: input.companyId,
       name: "Paperclip",
@@ -69,10 +73,10 @@ describeEmbeddedPostgres("heartbeat bounded retry scheduling", () => {
     await db.insert(agents).values({
       id: input.agentId,
       companyId: input.companyId,
-      name: "CodexCoder",
+      name: agentName,
       role: "engineer",
       status: "active",
-      adapterType: "codex_local",
+      adapterType,
       adapterConfig: {},
       runtimeConfig: {
         heartbeat: {
@@ -379,6 +383,61 @@ describeEmbeddedPostgres("heartbeat bounded retry scheduling", () => {
     expect((retryRun?.contextSnapshot as Record<string, unknown> | null)?.transientRetryNotBefore).toBe(
       retryNotBefore.toISOString(),
     );
+
+    const wakeupRequest = await db
+      .select({ payload: agentWakeupRequests.payload })
+      .from(agentWakeupRequests)
+      .where(eq(agentWakeupRequests.id, retryRun?.wakeupRequestId ?? ""))
+      .then((rows) => rows[0] ?? null);
+
+    expect((wakeupRequest?.payload as Record<string, unknown> | null)?.transientRetryNotBefore).toBe(
+      retryNotBefore.toISOString(),
+    );
+  });
+
+  it("schedules bounded retries for claude_transient_upstream and honors its retry-not-before hint", async () => {
+    const companyId = randomUUID();
+    const agentId = randomUUID();
+    const runId = randomUUID();
+    const now = new Date(2026, 3, 22, 10, 0, 0);
+    const retryNotBefore = new Date(2026, 3, 22, 16, 0, 0);
+
+    await seedRetryFixture({
+      runId,
+      companyId,
+      agentId,
+      now,
+      errorCode: "claude_transient_upstream",
+      adapterType: "claude_local",
+      resultJson: {
+        transientRetryNotBefore: retryNotBefore.toISOString(),
+      },
+    });
+
+    const scheduled = await heartbeat.scheduleBoundedRetry(runId, {
+      now,
+      random: () => 0.5,
+    });
+
+    expect(scheduled.outcome).toBe("scheduled");
+    if (scheduled.outcome !== "scheduled") return;
+    expect(scheduled.dueAt.getTime()).toBe(retryNotBefore.getTime());
+
+    const retryRun = await db
+      .select({
+        contextSnapshot: heartbeatRuns.contextSnapshot,
+        scheduledRetryAt: heartbeatRuns.scheduledRetryAt,
+        wakeupRequestId: heartbeatRuns.wakeupRequestId,
+      })
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.id, scheduled.run.id))
+      .then((rows) => rows[0] ?? null);
+
+    expect(retryRun?.scheduledRetryAt?.getTime()).toBe(retryNotBefore.getTime());
+    const contextSnapshot = (retryRun?.contextSnapshot as Record<string, unknown> | null) ?? {};
+    expect(contextSnapshot.transientRetryNotBefore).toBe(retryNotBefore.toISOString());
+    // Claude does not participate in the Codex fallback-mode ladder.
+    expect(contextSnapshot.codexTransientFallbackMode ?? null).toBeNull();
 
     const wakeupRequest = await db
       .select({ payload: agentWakeupRequests.payload })
