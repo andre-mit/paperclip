@@ -207,6 +207,23 @@ describe("InlineEditor", () => {
     });
   });
 
+  it("marks multiline preview textboxes as multiline", () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    const root = createRoot(container);
+
+    act(() => {
+      root.render(<InlineEditor value="Hello world" multiline onSave={onSave} />);
+    });
+
+    const preview = container.querySelector<HTMLElement>('[role="textbox"]');
+    expect(preview).not.toBeNull();
+    expect(preview?.getAttribute("aria-multiline")).toBe("true");
+
+    act(() => {
+      root.unmount();
+    });
+  });
+
   it("syncs a new multiline value while focused when the user has not edited locally", () => {
     const onSave = vi.fn().mockResolvedValue(undefined);
     const root = createRoot(container);

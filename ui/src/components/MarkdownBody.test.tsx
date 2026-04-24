@@ -187,6 +187,14 @@ describe("MarkdownBody", () => {
     expect(html).toContain("text-green-600");
   });
 
+  it("does not auto-link non-issue internal route paths", () => {
+    const html = renderMarkdown("Use /issues/new for the creation form and /api/issues for data.");
+
+    expect(html).toContain("Use /issues/new for the creation form and /api/issues for data.");
+    expect(html).not.toContain('href="/issues/new"');
+    expect(html).not.toContain('data-mention-kind="issue"');
+  });
+
   it("rewrites issue scheme links to internal issue links", () => {
     const html = renderMarkdown("See issue://PAP-1310 and issue://:PAP-1311.", [
       { identifier: "PAP-1310", status: "done" },

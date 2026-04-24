@@ -238,6 +238,7 @@ export function InlineEditor({
 
     if (!showEditor) {
       const enterEditMode = () => {
+        if (multilineEditing) return;
         justEnteredEditRef.current = true;
         setMultilineEditing(true);
       };
@@ -254,6 +255,7 @@ export function InlineEditor({
           }}
           onDragEnter={() => enterEditMode()}
           role="textbox"
+          aria-multiline="true"
           aria-label={placeholder}
         >
           <MarkdownBody className={cn("paperclip-edit-in-place-content", className)}>
