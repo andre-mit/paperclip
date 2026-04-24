@@ -1,4 +1,5 @@
 import { useState } from "react";
+import type { IssueBlockerAttention } from "@paperclipai/shared";
 import { cn } from "../lib/utils";
 import { issueStatusIcon, issueStatusIconDefault } from "../lib/status-colors";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -12,15 +13,26 @@ function statusLabel(status: string): string {
 
 interface StatusIconProps {
   status: string;
+  blockerAttention?: IssueBlockerAttention | null;
   onChange?: (status: string) => void;
   className?: string;
   showLabel?: boolean;
 }
 
-export function StatusIcon({ status, onChange, className, showLabel }: StatusIconProps) {
+function coveredBlockedLabel(blockerAttention: IssueBlockerAttention | null | undefined) {
+  return blockerAttention?.reason === "active_child"
+    ? "Blocked, waiting on running sub-issue"
+    : "Blocked, covered by active dependency";
+}
+
+export function StatusIcon({ status, blockerAttention, onChange, className, showLabel }: StatusIconProps) {
   const [open, setOpen] = useState(false);
-  const colorClass = issueStatusIcon[status] ?? issueStatusIconDefault;
+  const isCoveredBlocked = status === "blocked" && blockerAttention?.state === "covered";
+  const colorClass = isCoveredBlocked
+    ? "text-cyan-600 border-cyan-600 dark:text-cyan-400 dark:border-cyan-400"
+    : issueStatusIcon[status] ?? issueStatusIconDefault;
   const isDone = status === "done";
+  const ariaLabel = isCoveredBlocked ? coveredBlockedLabel(blockerAttention) : statusLabel(status);
 
   const circle = (
     <span
@@ -30,9 +42,15 @@ export function StatusIcon({ status, onChange, className, showLabel }: StatusIco
         onChange && !showLabel && "cursor-pointer",
         className
       )}
+      data-blocker-attention-state={isCoveredBlocked ? "covered" : undefined}
+      aria-label={ariaLabel}
+      title={ariaLabel}
     >
       {isDone && (
         <span className="absolute inset-0 m-auto h-2 w-2 rounded-full bg-current" />
+      )}
+      {isCoveredBlocked && (
+        <span className="absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full border border-background bg-current" />
       )}
     </span>
   );

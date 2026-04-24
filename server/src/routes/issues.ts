@@ -1016,6 +1016,7 @@ export function issueRoutes(
       commentCursor,
       wakeComment,
       relations,
+      blockerAttention,
       attachments,
       continuationSummary,
       currentExecutionWorkspace,
@@ -1026,6 +1027,7 @@ export function issueRoutes(
         svc.getCommentCursor(issue.id),
         wakeCommentId ? svc.getComment(wakeCommentId) : null,
         svc.getRelationSummaries(issue.id),
+        svc.listBlockerAttention(issue.companyId, [issue]).then((map) => map.get(issue.id) ?? null),
         svc.listAttachments(issue.id),
         documentsSvc.getIssueDocumentByKey(issue.id, ISSUE_CONTINUATION_SUMMARY_DOCUMENT_KEY),
         currentExecutionWorkspacePromise,
@@ -1038,6 +1040,7 @@ export function issueRoutes(
         title: issue.title,
         description: issue.description,
         status: issue.status,
+        ...(blockerAttention ? { blockerAttention } : {}),
         priority: issue.priority,
         projectId: issue.projectId,
         goalId: goal?.id ?? issue.goalId,
@@ -1107,12 +1110,13 @@ export function issueRoutes(
       return;
     }
     assertCompanyAccess(req, issue.companyId);
-    const [{ project, goal }, ancestors, mentionedProjectIds, documentPayload, relations, referenceSummary] = await Promise.all([
+    const [{ project, goal }, ancestors, mentionedProjectIds, documentPayload, relations, blockerAttention, referenceSummary] = await Promise.all([
       resolveIssueProjectAndGoal(issue),
       svc.getAncestors(issue.id),
       svc.findMentionedProjectIds(issue.id, { includeCommentBodies: false }),
       documentsSvc.getIssueDocumentPayload(issue),
       svc.getRelationSummaries(issue.id),
+      svc.listBlockerAttention(issue.companyId, [issue]).then((map) => map.get(issue.id) ?? null),
       issueReferencesSvc.listIssueReferenceSummary(issue.id),
     ]);
     const mentionedProjects = mentionedProjectIds.length > 0
@@ -1126,6 +1130,7 @@ export function issueRoutes(
       ...issue,
       goalId: goal?.id ?? issue.goalId,
       ancestors,
+      ...(blockerAttention ? { blockerAttention } : {}),
       blockedBy: relations.blockedBy,
       blocks: relations.blocks,
       relatedWork: referenceSummary,

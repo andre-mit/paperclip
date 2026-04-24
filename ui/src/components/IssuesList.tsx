@@ -1087,7 +1087,7 @@ export function IssuesList({
                             </button>
                           ) : (
                             <span onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}>
-                              <StatusIcon status={issue.status} onChange={(s) => onUpdateIssue(issue.id, { status: s })} />
+                              <StatusIcon status={issue.status} blockerAttention={issue.blockerAttention} onChange={(s) => onUpdateIssue(issue.id, { status: s })} />
                             </span>
                           )
                         }
@@ -1111,7 +1111,7 @@ export function IssuesList({
                               showIdentifier={visibleIssueColumnSet.has("id") && availableIssueColumnSet.has("id")}
                               statusSlot={(
                                 <span onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}>
-                                  <StatusIcon status={issue.status} onChange={(s) => onUpdateIssue(issue.id, { status: s })} />
+                                  <StatusIcon status={issue.status} blockerAttention={issue.blockerAttention} onChange={(s) => onUpdateIssue(issue.id, { status: s })} />
                                 </span>
                               )}
                             />
