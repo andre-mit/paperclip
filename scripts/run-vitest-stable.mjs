@@ -5,7 +5,6 @@ import os from "node:os";
 import path from "node:path";
 
 const repoRoot = process.cwd();
-const serverRoot = path.join(repoRoot, "server");
 const serverTestsDir = path.join(repoRoot, "server", "src", "__tests__");
 const nonServerProjects = [
   "@paperclipai/shared",
@@ -64,10 +63,6 @@ function toRepoPath(file) {
   return path.relative(repoRoot, file).split(path.sep).join("/");
 }
 
-function toServerPath(file) {
-  return path.relative(serverRoot, file).split(path.sep).join("/");
-}
-
 function isRouteOrAuthzTest(file) {
   if (routeTestPattern.test(file)) {
     return true;
@@ -104,13 +99,10 @@ function runVitest(args, label) {
 
 const routeTests = walk(serverTestsDir)
   .filter((file) => isRouteOrAuthzTest(toRepoPath(file)))
-  .map((file) => ({
-    repoPath: toRepoPath(file),
-    serverPath: toServerPath(file),
-  }))
+  .map((file) => ({ repoPath: toRepoPath(file) }))
   .sort((a, b) => a.repoPath.localeCompare(b.repoPath));
 
-const excludeRouteArgs = routeTests.flatMap((file) => ["--exclude", file.serverPath]);
+const excludeRouteArgs = routeTests.flatMap((file) => ["--exclude", file.repoPath]);
 for (const project of nonServerProjects) {
   runVitest(["--project", project], `non-server project ${project}`);
 }
