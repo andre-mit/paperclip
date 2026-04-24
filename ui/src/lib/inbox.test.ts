@@ -842,6 +842,7 @@ describe("inbox helpers", () => {
           projects: [],
           workspaces: [],
           liveOnly: false,
+          externalObjectStatuses: [],
           hideRoutineExecutions: true,
         },
       }).map((issue) => issue.id),
@@ -862,6 +863,7 @@ describe("inbox helpers", () => {
           projects: [],
           workspaces: [],
           liveOnly: false,
+          externalObjectStatuses: [],
           hideRoutineExecutions: true,
         },
       }),
@@ -882,6 +884,7 @@ describe("inbox helpers", () => {
           projects: [],
           workspaces: [],
           liveOnly: false,
+          externalObjectStatuses: [],
           hideRoutineExecutions: true,
         },
       }),
@@ -948,6 +951,7 @@ describe("inbox helpers", () => {
         projects: ["project-1"],
         workspaces: ["workspace-1"],
         liveOnly: true,
+        externalObjectStatuses: [],
         hideRoutineExecutions: false,
       },
     });
@@ -963,6 +967,7 @@ describe("inbox helpers", () => {
         projects: [],
         workspaces: [],
         liveOnly: false,
+        externalObjectStatuses: [],
         hideRoutineExecutions: true,
       },
     });
@@ -979,6 +984,7 @@ describe("inbox helpers", () => {
         projects: ["project-1"],
         workspaces: ["workspace-1"],
         liveOnly: true,
+        externalObjectStatuses: [],
         hideRoutineExecutions: false,
       },
     });
@@ -994,6 +1000,7 @@ describe("inbox helpers", () => {
         projects: [],
         workspaces: [],
         liveOnly: false,
+        externalObjectStatuses: [],
         hideRoutineExecutions: true,
       },
     });
@@ -1028,6 +1035,7 @@ describe("inbox helpers", () => {
         projects: ["project-1"],
         workspaces: ["workspace-1"],
         liveOnly: false,
+        externalObjectStatuses: [],
         hideRoutineExecutions: false,
       },
     });

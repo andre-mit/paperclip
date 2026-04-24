@@ -1,4 +1,4 @@
-import { isValidElement, useEffect, useId, useState, type ReactNode } from "react";
+import { isValidElement, useEffect, useId, useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ExternalLink, Github } from "lucide-react";
 import Markdown, { defaultUrlTransform, type Components, type Options } from "react-markdown";
@@ -12,6 +12,33 @@ import { queryKeys } from "../lib/queryKeys";
 import { parseIssueReferenceFromHref, remarkLinkIssueReferences } from "../lib/issue-reference";
 import { remarkSoftBreaks } from "../lib/remark-soft-breaks";
 import { StatusIcon } from "./StatusIcon";
+import { ExternalObjectStatusIcon } from "./ExternalObjectStatusIcon";
+import {
+  externalObjectCategoryLabel,
+  externalObjectLivenessLabel,
+  externalObjectProviderLabel,
+} from "../lib/external-objects";
+import { normalizeExternalObjectHref } from "../lib/external-object-href";
+import type {
+  ExternalObjectLivenessState,
+  ExternalObjectStatusCategory,
+} from "@paperclipai/shared";
+
+/**
+ * Host-resolved external-object metadata for inline markdown decoration.
+ * The renderer only consumes the host normalized fields here — plugin React
+ * is never mounted inline (Phase 1B security review).
+ */
+export interface MarkdownExternalReference {
+  providerKey: string | null;
+  objectType: string | null;
+  statusCategory: ExternalObjectStatusCategory;
+  liveness: ExternalObjectLivenessState;
+  statusLabel?: string | null;
+  displayTitle?: string | null;
+}
+
+export type MarkdownExternalReferenceMap = Record<string, MarkdownExternalReference>;
 
 interface MarkdownBodyProps {
   children: string;
@@ -19,6 +46,12 @@ interface MarkdownBodyProps {
   style?: React.CSSProperties;
   softBreaks?: boolean;
   linkIssueReferences?: boolean;
+  /**
+   * Optional map of `normalizeExternalObjectHref(href)` → host-resolved metadata.
+   * Hrefs in the markdown that resolve to one of these keys get the inline
+   * status icon prefix used by §2 of the UX spec.
+   */
+  externalReferences?: MarkdownExternalReferenceMap;
   /** Optional resolver for relative image paths (e.g. within export packages) */
   resolveImageSrc?: (src: string) => string | null;
   /** Called when a user clicks an inline image */
@@ -58,6 +91,49 @@ function MarkdownIssueLink({
       ) : null}
       {children}
     </Link>
+  );
+}
+
+function MarkdownExternalLink({
+  href,
+  reference,
+  children,
+}: {
+  href: string;
+  reference: MarkdownExternalReference;
+  children: ReactNode;
+}) {
+  const provider = externalObjectProviderLabel(reference.providerKey);
+  const statusLabel = reference.statusLabel ?? externalObjectCategoryLabel(reference.statusCategory);
+  const livenessLabel = externalObjectLivenessLabel(reference.liveness);
+  const livenessSuffix = reference.liveness === "fresh" || reference.liveness === "unknown"
+    ? ""
+    : ` (${livenessLabel})`;
+  const titleParts = [
+    reference.displayTitle ?? `${provider} ${statusLabel}`,
+    `${provider} — ${statusLabel}${livenessSuffix}`,
+  ];
+  const title = titleParts.filter(Boolean).join(" · ");
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      data-external-link="resolved"
+      data-external-status={reference.statusCategory}
+      data-external-liveness={reference.liveness}
+      title={title}
+      aria-label={`${provider} ${statusLabel}${livenessSuffix}: ${reference.displayTitle ?? href}`}
+      className="paperclip-markdown-external-ref"
+    >
+      <ExternalObjectStatusIcon
+        category={reference.statusCategory}
+        liveness={reference.liveness}
+        label={`${provider}: ${statusLabel}`}
+        inline
+      />
+      {children}
+    </a>
   );
 }
 
@@ -244,10 +320,20 @@ export function MarkdownBody({
   style,
   softBreaks = true,
   linkIssueReferences = true,
+  externalReferences,
   resolveImageSrc,
   onImageClick,
 }: MarkdownBodyProps) {
   const { theme } = useTheme();
+  const externalReferenceLookup = useMemo<MarkdownExternalReferenceMap | null>(() => {
+    if (!externalReferences) return null;
+    const lookup: MarkdownExternalReferenceMap = {};
+    for (const [key, value] of Object.entries(externalReferences)) {
+      const normalized = normalizeExternalObjectHref(key) ?? key;
+      lookup[normalized] = value;
+    }
+    return lookup;
+  }, [externalReferences]);
   const remarkPlugins: NonNullable<Options["remarkPlugins"]> = [remarkGfm];
   if (linkIssueReferences) {
     remarkPlugins.push(remarkLinkIssueReferences);
@@ -329,6 +415,17 @@ export function MarkdownBody({
           </a>
         );
       }
+      const externalReference = href && externalReferenceLookup
+        ? externalReferenceLookup[normalizeExternalObjectHref(href) ?? ""] ?? null
+        : null;
+      if (externalReference && href) {
+        return (
+          <MarkdownExternalLink href={href} reference={externalReference}>
+            {linkChildren}
+          </MarkdownExternalLink>
+        );
+      }
+
       const isGitHubLink = isGitHubUrl(href);
       const isExternal = isExternalHttpUrl(href);
       const leadingIcon = isGitHubLink ? (

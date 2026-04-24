@@ -21,7 +21,9 @@ import { SIDEBAR_SCROLL_RESET_STATE } from "../lib/navigation-scroll";
 import { queryKeys } from "../lib/queryKeys";
 import { cn, projectRouteRef } from "../lib/utils";
 import { useProjectOrder } from "../hooks/useProjectOrder";
+import { useProjectExternalObjectSummary } from "../hooks/useIssueExternalObjects";
 import { BudgetSidebarMarker } from "./BudgetSidebarMarker";
+import { ExternalObjectStatusSummary } from "./ExternalObjectStatusSummary";
 import {
   Collapsible,
   CollapsibleContent,
@@ -59,6 +61,7 @@ function SortableProjectItem({
   } = useSortable({ id: project.id });
 
   const routeRef = projectRouteRef(project);
+  const { summary: externalObjectsSummary } = useProjectExternalObjectSummary(project.id);
 
   return (
     <div
@@ -95,6 +98,7 @@ function SortableProjectItem({
             style={{ backgroundColor: project.color ?? "#6366f1" }}
           />
           <span className="flex-1 truncate">{project.name}</span>
+          <ExternalObjectStatusSummary summary={externalObjectsSummary} compact />
           {project.pauseReason === "budget" ? <BudgetSidebarMarker title="Project paused by budget" /> : null}
         </NavLink>
         {projectSidebarSlots.length > 0 && (

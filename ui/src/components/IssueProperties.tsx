@@ -29,6 +29,9 @@ import { StatusIcon } from "./StatusIcon";
 import { PriorityIcon } from "./PriorityIcon";
 import { Identity } from "./Identity";
 import { IssueReferencePill } from "./IssueReferencePill";
+import { ExternalObjectPill } from "./ExternalObjectPill";
+import type { IssueExternalObjectGroup } from "../hooks/useIssueExternalObjects";
+import { externalObjectToneSeverity } from "../lib/external-objects";
 import { formatDate, cn, projectUrl } from "../lib/utils";
 import { timeAgo } from "../lib/timeAgo";
 import { Separator } from "@/components/ui/separator";
@@ -124,6 +127,10 @@ interface IssuePropertiesProps {
   onAddSubIssue?: () => void;
   onUpdate: (data: Record<string, unknown>) => void;
   inline?: boolean;
+  externalObjects?: IssueExternalObjectGroup[];
+  externalObjectsLoading?: boolean;
+  externalObjectsError?: boolean;
+  onRetryExternalObjects?: () => void;
 }
 
 function PropertyRow({ label, children }: { label: string; children: React.ReactNode }) {
@@ -203,6 +210,10 @@ export function IssueProperties({
   onAddSubIssue,
   onUpdate,
   inline,
+  externalObjects,
+  externalObjectsLoading,
+  externalObjectsError,
+  onRetryExternalObjects,
 }: IssuePropertiesProps) {
   const { selectedCompanyId } = useCompany();
   const queryClient = useQueryClient();
@@ -1111,6 +1122,49 @@ export function IssueProperties({
         >
           {projectContent}
         </PropertyPicker>
+
+        {externalObjectsError ? (
+          <PropertyRow label="External objects">
+            <span className="text-xs text-muted-foreground">
+              Couldn't load external objects.
+              {onRetryExternalObjects ? (
+                <>
+                  {" "}
+                  <button
+                    type="button"
+                    className="text-primary underline-offset-2 hover:underline"
+                    onClick={onRetryExternalObjects}
+                  >
+                    Retry
+                  </button>
+                </>
+              ) : null}
+            </span>
+          </PropertyRow>
+        ) : externalObjectsLoading ? (
+          <PropertyRow label="External objects">
+            <span className="h-4 w-24 animate-pulse rounded bg-muted/40" />
+          </PropertyRow>
+        ) : externalObjects && externalObjects.length > 0 ? (
+          <PropertyRow label="External objects">
+            <div className="flex flex-wrap items-center gap-1.5">
+              {[...externalObjects]
+                .sort((a, b) => {
+                  const aTone = externalObjectToneSeverity(a.group.object?.statusTone);
+                  const bTone = externalObjectToneSeverity(b.group.object?.statusTone);
+                  return bTone - aTone;
+                })
+                .map(({ pill, mentionCount, sourceLabels, group }) => (
+                  <ExternalObjectPill
+                    key={group.object?.id ?? `${pill.providerKey}:${pill.objectType}:${pill.url ?? "anon"}`}
+                    object={pill}
+                    sourceCount={mentionCount}
+                    sourceSummary={sourceLabels.join(", ")}
+                  />
+                ))}
+            </div>
+          </PropertyRow>
+        ) : null}
 
         <PropertyPicker
           inline={inline}

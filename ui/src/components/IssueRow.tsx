@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import type { Issue } from "@paperclipai/shared";
+import type { ExternalObjectSummary, Issue } from "@paperclipai/shared";
 import { Link } from "@/lib/router";
 import { X } from "lucide-react";
 import {
@@ -9,6 +9,7 @@ import {
 } from "../lib/issueDetailBreadcrumb";
 import { cn } from "../lib/utils";
 import { StatusIcon } from "./StatusIcon";
+import { ExternalObjectStatusSummary } from "./ExternalObjectStatusSummary";
 
 type UnreadState = "hidden" | "visible" | "fading";
 
@@ -21,6 +22,11 @@ interface IssueRowProps {
   desktopLeadingSpacer?: boolean;
   mobileMeta?: ReactNode;
   desktopTrailing?: ReactNode;
+  /**
+   * Optional pre-fetched external-object summary. Renders a compact severity
+   * marker before the rest of `desktopTrailing` on desktop only.
+   */
+  externalObjectSummary?: ExternalObjectSummary | null;
   trailingMeta?: ReactNode;
   titleSuffix?: ReactNode;
   titleClassName?: string;
@@ -44,6 +50,7 @@ export function IssueRow({
   desktopLeadingSpacer = false,
   mobileMeta,
   desktopTrailing,
+  externalObjectSummary,
   trailingMeta,
   titleSuffix,
   titleClassName,
@@ -124,8 +131,11 @@ export function IssueRow({
           ) : null}
         </span>
       </span>
-      {(desktopTrailing || trailingMeta) ? (
+      {(desktopTrailing || trailingMeta || externalObjectSummary) ? (
         <span className="ml-auto hidden shrink-0 items-center gap-2 sm:order-3 sm:flex sm:gap-3">
+          {externalObjectSummary ? (
+            <ExternalObjectStatusSummary summary={externalObjectSummary} compact />
+          ) : null}
           {desktopTrailing}
           {trailingMeta ? (
             <span className="text-xs text-muted-foreground">{trailingMeta}</span>
