@@ -669,6 +669,7 @@ export {
   linkIssueApprovalSchema,
   createIssueAttachmentMetadataSchema,
   createIssueWorkProductSchema,
+  issueWorkProductMetadataSchema,
   updateIssueWorkProductSchema,
   issueWorkProductTypeSchema,
   issueWorkProductStatusSchema,

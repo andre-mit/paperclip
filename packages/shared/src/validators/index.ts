@@ -213,11 +213,13 @@ export {
 
 export {
   createIssueWorkProductSchema,
+  issueWorkProductMetadataSchema,
   updateIssueWorkProductSchema,
   issueWorkProductTypeSchema,
   issueWorkProductStatusSchema,
   issueWorkProductReviewStateSchema,
   type CreateIssueWorkProduct,
+  type IssueWorkProductMetadata,
   type UpdateIssueWorkProduct,
 } from "./work-product.js";
 

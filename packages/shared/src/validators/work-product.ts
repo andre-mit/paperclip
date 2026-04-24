@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { workspaceFileRefSchema } from "./workspace-file-resource.js";
 
 export const issueWorkProductTypeSchema = z.enum([
   "preview_url",
@@ -29,6 +30,14 @@ export const issueWorkProductReviewStateSchema = z.enum([
   "changes_requested",
 ]);
 
+export const issueWorkProductMetadataSchema = z
+  .object({
+    resourceRef: workspaceFileRefSchema.optional().nullable(),
+  })
+  .passthrough();
+
+export type IssueWorkProductMetadata = z.infer<typeof issueWorkProductMetadataSchema>;
+
 export const createIssueWorkProductSchema = z.object({
   projectId: z.string().uuid().optional().nullable(),
   executionWorkspaceId: z.string().uuid().optional().nullable(),
@@ -43,7 +52,7 @@ export const createIssueWorkProductSchema = z.object({
   isPrimary: z.boolean().optional().default(false),
   healthStatus: z.enum(["unknown", "healthy", "unhealthy"]).optional().default("unknown"),
   summary: z.string().optional().nullable(),
-  metadata: z.record(z.unknown()).optional().nullable(),
+  metadata: issueWorkProductMetadataSchema.optional().nullable(),
   createdByRunId: z.string().uuid().optional().nullable(),
 });
 
