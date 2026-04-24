@@ -398,6 +398,7 @@ describeEmbeddedPostgres("paperclipai company import/export e2e", () => {
       apiBase,
       `/api/companies/${importedNew.company.id}/issues`,
     );
+    const importedMatchingIssues = importedIssues.filter((issue) => issue.title === sourceIssue.title);
 
     const importedMatchingIssues = importedIssues.filter((issue) => issue.title === sourceIssue.title);
 
@@ -473,6 +474,7 @@ describeEmbeddedPostgres("paperclipai company import/export e2e", () => {
       apiBase,
       `/api/companies/${importedNew.company.id}/issues`,
     );
+    const twiceImportedMatchingIssues = twiceImportedIssues.filter((issue) => issue.title === sourceIssue.title);
 
     const twiceImportedMatchingIssues = twiceImportedIssues.filter((issue) => issue.title === sourceIssue.title);
 
