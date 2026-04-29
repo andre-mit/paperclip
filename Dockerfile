@@ -60,6 +60,12 @@ RUN npm install --global --omit=dev @anthropic-ai/claude-code@latest @openai/cod
 COPY scripts/docker-entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
+RUN mkdir -p /paperclip/.gemini && \
+    echo '{"/app": "TRUST_PARENT", "/paperclip": "TRUST_PARENT"}' > /paperclip/.gemini/trustedFolders.json
+
+RUN chown -R 1000:1000 /paperclip/.gemini && \
+    chmod 664 /paperclip/.gemini/trustedFolders.json
+
 ENV NODE_ENV=production \
   HOME=/paperclip \
   HOST=0.0.0.0 \
@@ -72,7 +78,8 @@ ENV NODE_ENV=production \
   PAPERCLIP_CONFIG=/paperclip/instances/default/config.json \
   PAPERCLIP_DEPLOYMENT_MODE=authenticated \
   PAPERCLIP_DEPLOYMENT_EXPOSURE=private \
-  OPENCODE_ALLOW_ALL_MODELS=true
+  OPENCODE_ALLOW_ALL_MODELS=true \
+  GEMINI_SANDBOX=false
 
 VOLUME ["/paperclip"]
 EXPOSE 3100
